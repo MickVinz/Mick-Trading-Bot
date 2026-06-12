@@ -1,0 +1,25 @@
+# --- Secrets: NIEMALS committen ---
+.env
+.env.*
+!.env.example
+
+# --- Fremdes Kursmaterial (nicht veröffentlichen) ---
+Jason Casper Markdown/gemini-code-*.md
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Projekt-Ausgaben ---
+logs/
+outputs/
+
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

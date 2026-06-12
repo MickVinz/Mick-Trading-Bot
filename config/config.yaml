@@ -1,0 +1,113 @@
+# =============================================================================
+# Konfiguration: 5m Anchor-Trigger Scalp Bot
+# Quelle der Defaults: strategy_spec_5m_anchor_trigger.md
+#
+# Werte mit "KALIBRIEREN" sind Startannahmen (in der Spec 🟢 GESETZT) und
+# sollen im Paper Trading angepasst werden — ohne Code-Änderung, nur hier.
+# =============================================================================
+
+market:
+  symbol: "BTC/USDT"          # BTC/USDT Perpetual Futures (BingX)
+  timeframe: "5m"             # Spec: 5 Minuten
+
+# -----------------------------------------------------------------------------
+# Abschnitt 1: WaveTrend (LazyBear) — Dot-Signal
+# -----------------------------------------------------------------------------
+wavetrend:
+  # VERIFIZIERT gegen MCB-Chart am 2026-06-12: Mit 9/12/3 stimmen wt1/wt2
+  # bis auf 1-4 % mit Market Cipher B überein (Rest = Live-Kerzen-Bewegung).
+  # Ursprüngliche LazyBear-Annahme (10/21/4) wich ~35 % ab — verworfen.
+  n1: 9                       # Channel Length (VuManChu / MCB-intern)
+  n2: 12                      # Average Length (VuManChu / MCB-intern)
+  wt2_sma_length: 3           # SMA-Länge für wt2 (VuManChu / MCB-intern)
+  overbought_1: 60            # OB-Schwelle (BELEGT)
+  overbought_2: 53            # zweite OB-Schwelle (BELEGT)
+  oversold_1: -60             # OS-Schwelle (BELEGT)
+  oversold_2: -53             # zweite OS-Schwelle (BELEGT)
+
+# -----------------------------------------------------------------------------
+# Abschnitt 2: Anker -> Trigger Logik
+# -----------------------------------------------------------------------------
+anchor_trigger:
+  anchor_threshold: 60        # Ankerwelle schließt über +60 / unter -60 (BELEGT)
+  trigger_min_abs_wt1: 50     # GESETZT, KALIBRIEREN: Mindest-|wt1|-Extrem für
+                              # Triggerwellen. Verwirft "späte" Trigger nahe der
+                              # Null-Linie (Beispiel 11.06.: wt1 29,3 und 14,1).
+                              # 0 = Filter aus.
+  warmup_candles: 100         # GESETZT, KALIBRIEREN: Setups, die weniger als
+                              # 100 Kerzen nach Datenbeginn entstehen, gelten als
+                              # ungültig (EMA-Aufwärmphase -> verzerrte wt1-Werte,
+                              # z.B. anchor_wt1 -333). Kein Trade-Level berechnet.
+  # Wellen-Vergleich gemessen am wt1-Extremwert je Welle (GESETZT)
+  wave_comparison_basis: "wt1_extreme"
+  # Invalidierung: Null-Linien-Kreuzung beendet das Setup, KEIN Kerzenfenster (BELEGT)
+  invalidate_on_zero_cross: true
+
+# -----------------------------------------------------------------------------
+# Abschnitt 3: Entry-Timing
+# -----------------------------------------------------------------------------
+entry:
+  mode: "candle_close"        # GESETZT: Entry beim Schluss der Trigger-Kerze.
+                              # Alternative "limit_in_wick" erst nach Paper Trading.
+
+# -----------------------------------------------------------------------------
+# Abschnitt 4: MFI-Filter
+# -----------------------------------------------------------------------------
+mfi:
+  period: 14                  # Standardperiode (anpassbar)
+  # Filter: MFI(Trigger-Punkt) > MFI(Anker-Punkt) (BELEGT)
+  filter_enabled: true
+  # Bei aktiver Divergenz entfällt der MFI-Filter (BELEGT)
+  skip_filter_on_divergence: true
+  # Optionale Verschärfung: MFI-Nulllinien-Kreuzung als Zusatzbedingung
+  # (im Material belegt, als spätere Stufe testbar) — Start: aus
+  require_zero_cross: false
+
+# -----------------------------------------------------------------------------
+# Abschnitt 5: Stop Loss
+# -----------------------------------------------------------------------------
+stop_loss:
+  buffer_pct: 0.3             # GESETZT, KALIBRIEREN: 0,3 % unter Swing Low /
+                              # über Swing High (Quellbereich 0,15–0,5 %)
+  sl_min_pct: 0.3             # GESETZT, KALIBRIEREN: Mindest-SL-Abstand in %.
+                              # Setups mit engerem SL (z.B. 08:55-Short 0,117 %)
+                              # gelten als ungültig — zu eng für Gebühren/Slippage.
+  pivot_lookback: 5           # GESETZT, KALIBRIEREN: Pivot mit 5 Kerzen
+                              # Lookback je Seite (Alternativen: 3 / 7)
+
+# -----------------------------------------------------------------------------
+# Abschnitt 6: Take Profit (vereinfacht — Produktentscheidung 2026-06-12)
+# Einzige Exit-Regel: volle Position bei TP1 (RR 2:1) schließen.
+# -----------------------------------------------------------------------------
+take_profit:
+  rr_standard: 2.0            # Risk-Reward, volle Position schließt hier (BELEGT)
+
+# GESTRICHEN am 2026-06-12 (Vereinfachung für Bot-Start):
+#   rr_divergence: 3.0        # TP2/Divergenz-Ziel entfällt
+#   partial_exit_pct: 50      # kein Teilausstieg mehr
+#   move_sl_to_breakeven      # kein Breakeven-Zug mehr
+#   rest_exit (mfi_curvature) # kein Rest-Exit mehr
+# Diese Parameter sind absichtlich entfernt. Bei Bedarf später reaktivieren.
+
+# -----------------------------------------------------------------------------
+# Abschnitt 7: Divergenz-Erkennung
+# -----------------------------------------------------------------------------
+divergence:
+  divergence_window: 20            # GESETZT, KALIBRIEREN: max. Kerzenabstand
+                                   # zwischen den zwei Tiefs/Hochs (Quellen: Lücke).
+                                   # Großer Einfluss: hebt den MFI-Filter auf —
+                                   # sorgfältig testen!
+  pivot_lookback: 3                # GESETZT, KALIBRIEREN: Pivot-Bestätigung je
+                                   # Seite für Divergenz-Extrema. Kleiner als der
+                                   # SL-Pivot (5), da im 20-Kerzen-Fenster sonst
+                                   # zu wenige Pivots bestätigt werden.
+  comparison_basis: "wt1_extreme"  # GESETZT: Vergleich über wt1-Extremwerte
+
+# -----------------------------------------------------------------------------
+# Abschnitt 8: Risiko & Hebel (alle GESETZT)
+# -----------------------------------------------------------------------------
+risk:
+  risk_per_trade_pct: 1.0     # 1 % des Kapitals pro Trade (Casper-Standard)
+  leverage: 3                 # konservativer Start
+  max_open_positions: 1
+  max_daily_loss_pct: 3.0     # bei -3 % Tagesverlust pausiert der Bot

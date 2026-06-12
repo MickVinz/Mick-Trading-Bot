@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mick Trading Bot — Vision</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+    --muted:#8b949e; --blue:#58a6ff; --green:#3fb950; --red:#f85149;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"Segoe UI",system-ui,Arial,sans-serif; line-height:1.55;
+  }
+  .wrap { max-width:980px; margin:0 auto; padding:48px 24px 80px; }
+  h1 { font-size:34px; margin:0 0 6px; }
+  .sub { color:var(--muted); font-size:17px; margin:0 0 8px; }
+  .badge {
+    display:inline-block; margin:14px 0 36px; padding:7px 16px; border-radius:18px;
+    background:rgba(31,111,235,.13); border:1px solid var(--blue);
+    color:var(--blue); font-weight:600; font-size:14px;
+  }
+  .pipeline { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:0 0 40px; }
+  .step { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; position:relative; }
+  .step .n { color:var(--blue); font-weight:700; font-size:13px; letter-spacing:.04em; }
+  .step h3 { margin:10px 0 6px; font-size:16px; }
+  .step p { margin:2px 0; color:var(--muted); font-size:13px; }
+  .step.out { border-color:#238636; }
+  .step.out .n { color:var(--green); }
+  .arrow { color:var(--blue); text-align:center; align-self:center; font-size:22px; }
+  @media(max-width:760px){ .pipeline{grid-template-columns:1fr;} }
+  .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:28px 0 40px; }
+  @media(max-width:760px){ .cards{grid-template-columns:1fr;} }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .card .k { font-size:13px; color:var(--muted); }
+  .card .v { font-size:22px; font-weight:700; margin-top:4px; }
+  .v.green{color:var(--green);} .v.blue{color:var(--blue);} .v.red{color:var(--red);}
+  h2 { font-size:22px; margin:42px 0 14px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; }
+  code { background:#1f2630; padding:2px 6px; border-radius:5px; font-size:13px; }
+  .warn { margin-top:40px; padding:14px 18px; border-left:3px solid var(--red);
+          background:rgba(248,81,73,.08); color:#ffb4ae; font-size:14px; border-radius:0 8px 8px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Mick Trading Bot</h1>
+  <p class="sub">5m Anchor-Trigger Scalp · BTC/USDT Perpetual Futures · BingX</p>
+  <span class="badge">● PAPER TRADING — sendet KEINE Orders</span>
+
+  <h2>So funktioniert der Bot</h2>
+  <div class="pipeline">
+    <div class="step">
+      <div class="n">1 · DATEN</div>
+      <h3>BingX REST</h3>
+      <p>500 × 5m-Kerzen</p>
+      <p>Repaint-Schutz: nur geschlossene Kerzen</p>
+    </div>
+    <div class="step">
+      <div class="n">2 · INDIKATOREN</div>
+      <h3>WaveTrend + MFI</h3>
+      <p>wt1/wt2 (9/12/3) + Dots</p>
+      <p>Money Flow Index (14)</p>
+    </div>
+    <div class="step">
+      <div class="n">3 · SETUP</div>
+      <h3>Anker → Trigger</h3>
+      <p>MFI-Filter + Divergenz</p>
+      <p>Null-Kreuzung = invalid</p>
+    </div>
+    <div class="step out">
+      <div class="n">4 · LEVELS</div>
+      <h3>Entry · SL · TP1</h3>
+      <p>SL: Pivot ±0,3 %</p>
+      <p>RR 2:1, voller Exit</p>
+    </div>
+  </div>
+
+  <h2>Beispiel-Signal — Live-Test 2026-06-12</h2>
+  <div class="cards">
+    <div class="card"><div class="k">Entry (Long, Kerzenschluss)</div><div class="v blue">63 064.60</div></div>
+    <div class="card"><div class="k">Take Profit (RR 2:1)</div><div class="v green">63 950.06</div></div>
+    <div class="card"><div class="k">Stop Loss (Pivot −0,3 %)</div><div class="v red">62 621.87</div></div>
+  </div>
+
+  <h2>Strategie-Regeln (Kurzfassung)</h2>
+  <table>
+    <tr><th>Element</th><th>Regel</th></tr>
+    <tr><td>Anker</td><td>erste WaveTrend-Welle jenseits ±60</td></tr>
+    <tr><td>Trigger</td><td>folgende Welle mit Dot, Extrem näher an 0 als Anker, <code>|wt1| ≥ 50</code></td></tr>
+    <tr><td>MFI-Filter</td><td><code>MFI(Trigger) &gt; MFI(Anker)</code> — entfällt bei aktiver Divergenz</td></tr>
+    <tr><td>Entry</td><td>Schluss der Trigger-Kerze</td></tr>
+    <tr><td>Stop Loss</td><td>Pivot (5 Kerzen) ± 0,3 %, min. 0,3 % Abstand</td></tr>
+    <tr><td>Take Profit</td><td>volle Position bei RR 2:1</td></tr>
+    <tr><td>Invalidierung</td><td>wt1 kreuzt Null-Linie</td></tr>
+    <tr><td>Risiko / Hebel</td><td>1 % pro Trade · 3× · max. 1 Position · −3 % Tagesstopp</td></tr>
+  </table>
+
+  <div class="warn">
+    ⚠ Keine Anlageberatung. Mehrere Werte sind Startannahmen, die erst im Paper Trading
+    kalibriert werden. In dieser Phase werden KEINE echten Orders gesendet.
+  </div>
+</div>
+</body>
+</html>
