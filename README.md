@@ -1,44 +1,70 @@
 # Mick Trading Bot
 
-**5m Anchor-Trigger Scalp** für **BTC/USDT Perpetual Futures** (BingX) — rein indikatorbasiert.
+**5m Anchor-Trigger Scalp** für **BTC/USDT Perpetual Futures** (BingX) — rein indikatorbasiert, vollautomatisch.
 
-> ⚠️ **Status: Paper Trading.** Der Bot sendet **keine** echten Orders. Aktuell stehen
-> Datenanbindung, Indikatoren und Setup-Erkennung. Keine Anlageberatung.
-
-![Pipeline](docs/pipeline.svg)
-
-👉 **Interaktive Vision:** [`docs/vision.html`](docs/vision.html) im Browser öffnen.
+> ⚠️ **Status: Paper Trading — keine echten Orders.** Reine Simulation zur Kalibrierung. Keine Anlageberatung.
 
 ---
 
-## Was der Bot macht
+## Dashboard
 
-Er übersetzt die Jason-Casper-„Anchor-Trigger"-Logik in **exakte, prüfbare Regeln** und
-durchläuft pro 5-Minuten-Kerze diese Pipeline:
+![Dashboard Preview](docs/dashboard-preview.png)
+
+Das Live-Dashboard läuft lokal im Browser und aktualisiert sich automatisch alle 30 Sekunden:
+
+```bash
+# HTTP-Server starten (aus dem Projektordner)
+python -m http.server 8080
+```
+
+Dann im Browser öffnen: **`http://localhost:8080/scripts/dashboard.html`**
+
+| Feature | Details |
+|---------|---------|
+| Balance-Kurve | Chart.js Linienchart, blau |
+| PNL pro Trade | Balken grün/rot je Ergebnis |
+| Offene Position | Entry · SL · TP1 live |
+| Trade-Journal | alle Trades aus `data/trades.csv` |
+| Auto-Refresh | alle 30 s, Countdown sichtbar |
+| Design | Apple Dark Mode (`#000` / `#1c1c1e`) |
+
+👉 **Projektübersicht (visuell):** [`docs/vision.html`](docs/vision.html) im Browser öffnen.
+
+---
+
+## Bot starten
+
+```bash
+# Paper-Trading-Loop (läuft alle 5 Minuten, Ctrl+C zum Stoppen)
+python scripts/run_paper_loop.py
+
+# Unit-Tests (27 Tests, kein Netz nötig)
+python scripts/test_paper_engine.py
+```
+
+---
+
+## Pipeline — pro 5m-Kerze
 
 | Schritt | Modul | Aufgabe |
 |--------|-------|---------|
-| 1 · Daten | [`src/exchange/bingx_client.py`](src/exchange/bingx_client.py) | 500 × 5m-Kerzen von BingX, **nur geschlossene** (Repaint-Schutz) |
+| 1 · Daten | [`src/exchange/bingx_client.py`](src/exchange/bingx_client.py) | 500 × 5m-Kerzen von BingX, nur geschlossene (Repaint-Schutz) |
 | 2 · Indikatoren | [`src/indicators/`](src/indicators) | WaveTrend (9/12/3, wt1/wt2 + Dots) · MFI(14) |
-| 3 · Setup | [`src/strategy/setup_detector.py`](src/strategy/setup_detector.py) | Anker→Trigger + MFI-Filter + [Divergenz](src/strategy/divergence_detector.py) |
-| 4 · Levels | [`src/strategy/trade_levels.py`](src/strategy/trade_levels.py) | Entry · Stop Loss · Take Profit (RR 2:1) |
+| 3 · Setup | [`src/strategy/setup_detector.py`](src/strategy/setup_detector.py) | Anker→Trigger + MFI-Filter + Divergenz |
+| 4 · Ausführung | [`src/paper/paper_engine.py`](src/paper/paper_engine.py) | Entry · SL · TP1 · Size · Journal |
 
-## Strategie-Regeln (Kurzfassung)
+## Strategie-Regeln
 
 | Element | Regel |
 |---------|-------|
 | **Anker** | erste WaveTrend-Welle jenseits ±60 |
-| **Trigger** | folgende Welle mit Dot, Extrem näher an 0 als Anker, `|wt1| ≥ 50` |
-| **MFI-Filter** | `MFI(Trigger) > MFI(Anker)` — entfällt bei aktiver Divergenz |
+| **Trigger** | folgende Welle mit Dot, Extrem näher an 0, `\|wt1\| ≥ 50` |
+| **MFI-Filter** | `MFI(Trigger) > MFI(Anker)` — entfällt bei Divergenz |
 | **Entry** | Schluss der Trigger-Kerze |
 | **Stop Loss** | Pivot (5 Kerzen) ± 0,3 %, min. 0,3 % Abstand |
-| **Take Profit** | volle Position bei **RR 2:1** |
-| **Invalidierung** | wt1 kreuzt die Null-Linie |
-| **Risiko / Hebel** | 1 % pro Trade · 3× · max. 1 Position · −3 % Tagesstopp |
-
-Vollständige Spezifikation: [`Jason Casper Markdown/strategy_spec_5m_anchor_trigger.md`](Jason%20Casper%20Markdown/strategy_spec_5m_anchor_trigger.md)
-
----
+| **Take Profit** | volle Position bei RR 2:1 |
+| **Invalidierung** | wt1 kreuzt Null-Linie |
+| **Risiko / Hebel** | 1 % pro Trade · 3× Hebel · max. 1 Position · −3 % Tagesstopp |
 
 ## Setup
 
@@ -46,49 +72,38 @@ Vollständige Spezifikation: [`Jason Casper Markdown/strategy_spec_5m_anchor_tri
 pip install -r requirements.txt
 ```
 
-**API-Keys** (nur für späteres Live-Trading nötig — Paper Trading läuft über öffentliche Endpunkte):
-
 ```bash
 # .env im Projekt-Root anlegen (wird NICHT committed)
 BINGX_API_KEY=dein_api_key
 BINGX_SECRET_KEY=dein_secret_key
 ```
 
-> 🔒 `.env` ist via `.gitignore` ausgeschlossen. Keys gehören **niemals** in den Code.
-
-## Verwendung
-
-```bash
-# BingX-Verbindung testen + komplette Pipeline auf Live-Daten
-python scripts/test_bingx_connection.py
-
-# Indikatoren gegen TradingView/Market-Cipher-Chart abgleichen
-python scripts/verify_indicators.py
-```
-
-`test_bingx_connection.py` lädt Kerzen, zeigt einen BingX↔Binance-Spread-Check
-und meldet, ob aktuell ein gültiges Setup vorliegt.
+> `.env` ist via `.gitignore` ausgeschlossen. API-Keys gehören niemals in den Code.
 
 ## Konfiguration
 
-Alle Parameter (Schwellen, Pivot-Fenster, Risiko, …) liegen in
-[`config/config.yaml`](config/config.yaml) — kalibrierbar **ohne Code-Änderung**.
-Mit `KALIBRIEREN` markierte Werte sind Startannahmen für das Paper Trading.
+Alle Parameter in [`config/config.yaml`](config/config.yaml) — kalibrierbar ohne Code-Änderung.
 
 ## Projektstruktur
 
 ```
 src/
-  exchange/   BingX-Anbindung (lesend)
-  indicators/ WaveTrend, MFI
-  strategy/   Setup-Erkennung, Divergenz, Trade-Levels
-scripts/      Test- & Verifikationsskripte
-config/       config.yaml
-docs/         Vision (SVG + HTML)
+  exchange/      BingX REST-Wrapper (read-only)
+  indicators/    WaveTrend, MFI
+  strategy/      Setup-Erkennung, Divergenz, Trade-Levels
+  paper/         Paper-Engine, Journal, Position
+scripts/
+  run_paper_loop.py     Haupt-Loop (5m-Takt)
+  dashboard.html        Live-Dashboard (Apple Dark Mode)
+  test_paper_engine.py  27 Unit-Tests
+config/
+  config.yaml    alle Parameter
+data/            gitignored — state.json, trades.csv
+docs/
+  vision.html    Projektübersicht (visuell)
 ```
 
 ---
 
 > **Disclaimer:** Software für Bildungs-/Forschungszwecke. Keine Anlageberatung.
-> Krypto-Trading ist hochriskant. Mehrere Strategie-Parameter sind unkalibrierte
-> Startannahmen. In der aktuellen Phase werden **keine echten Orders** ausgeführt.
+> Krypto-Trading ist hochriskant. In der aktuellen Phase werden **keine echten Orders** ausgeführt.
