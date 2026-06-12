@@ -75,7 +75,7 @@ def main() -> None:
     try:
         while True:
             wait = _secs_to_next_boundary()
-            next_run_dt = datetime.datetime.utcnow() + datetime.timedelta(seconds=wait)
+            next_run_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=wait)
             print(
                 f"\nNächster Durchlauf: {next_run_dt:%Y-%m-%d %H:%M:%S} UTC "
                 f"(in {wait:.0f}s) ...",
@@ -83,7 +83,7 @@ def main() -> None:
             )
             time.sleep(wait)
 
-            now_str = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
             print(f"\n[{now_str}]", flush=True)
 
             try:

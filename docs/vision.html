@@ -3,107 +3,375 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mick Trading Bot — Vision</title>
+<title>Mick Trading Bot — Projektübersicht</title>
 <style>
   :root {
-    --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
-    --muted:#8b949e; --blue:#58a6ff; --green:#3fb950; --red:#f85149;
+    --bg:    #000000;
+    --panel: #1c1c1e;
+    --p2:    #2c2c2e;
+    --p3:    #3a3a3c;
+    --sep:   rgba(84,84,88,.5);
+    --text:  #ffffff;
+    --t2:    #ebebf5;
+    --t3:    #98989e;
+    --blue:  #0a84ff;
+    --green: #30d158;
+    --red:   #ff453a;
+    --orng:  #ff9f0a;
   }
-  * { box-sizing:border-box; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    margin:0; background:var(--bg); color:var(--text);
-    font-family:"Segoe UI",system-ui,Arial,sans-serif; line-height:1.55;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", system-ui, sans-serif;
+    font-size: 15px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width:980px; margin:0 auto; padding:48px 24px 80px; }
-  h1 { font-size:34px; margin:0 0 6px; }
-  .sub { color:var(--muted); font-size:17px; margin:0 0 8px; }
-  .badge {
-    display:inline-block; margin:14px 0 36px; padding:7px 16px; border-radius:18px;
-    background:rgba(31,111,235,.13); border:1px solid var(--blue);
-    color:var(--blue); font-weight:600; font-size:14px;
+
+  /* Header */
+  .hdr {
+    padding: 40px 0 32px;
+    border-bottom: .5px solid var(--sep);
+    text-align: center;
   }
-  .pipeline { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:0 0 40px; }
-  .step { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; position:relative; }
-  .step .n { color:var(--blue); font-weight:700; font-size:13px; letter-spacing:.04em; }
-  .step h3 { margin:10px 0 6px; font-size:16px; }
-  .step p { margin:2px 0; color:var(--muted); font-size:13px; }
-  .step.out { border-color:#238636; }
-  .step.out .n { color:var(--green); }
-  .arrow { color:var(--blue); text-align:center; align-self:center; font-size:22px; }
-  @media(max-width:760px){ .pipeline{grid-template-columns:1fr;} }
-  .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin:28px 0 40px; }
-  @media(max-width:760px){ .cards{grid-template-columns:1fr;} }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; }
-  .card .k { font-size:13px; color:var(--muted); }
-  .card .v { font-size:22px; font-weight:700; margin-top:4px; }
-  .v.green{color:var(--green);} .v.blue{color:var(--blue);} .v.red{color:var(--red);}
-  h2 { font-size:22px; margin:42px 0 14px; border-bottom:1px solid var(--line); padding-bottom:8px; }
-  table { width:100%; border-collapse:collapse; font-size:14px; }
-  th,td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); }
-  th { color:var(--muted); font-weight:600; }
-  code { background:#1f2630; padding:2px 6px; border-radius:5px; font-size:13px; }
-  .warn { margin-top:40px; padding:14px 18px; border-left:3px solid var(--red);
-          background:rgba(248,81,73,.08); color:#ffb4ae; font-size:14px; border-radius:0 8px 8px 0; }
+  .hdr h1 { font-size: 36px; font-weight: 700; letter-spacing: -.04em; }
+  .hdr .sub { font-size: 16px; color: var(--t3); margin-top: 6px; letter-spacing: -.01em; }
+  .badge-live {
+    display: inline-flex; align-items: center; gap: 7px;
+    margin-top: 18px; padding: 7px 18px; border-radius: 20px;
+    background: rgba(10,132,255,.15); color: var(--blue);
+    font-size: 13px; font-weight: 600; letter-spacing: -.01em;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+  /* Layout */
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 0 24px 80px; }
+
+  h2 {
+    font-size: 20px; font-weight: 600; letter-spacing: -.02em;
+    margin: 48px 0 16px;
+    padding-bottom: 10px; border-bottom: .5px solid var(--sep);
+  }
+
+  /* Status Cards */
+  .status-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin: 32px 0 0; }
+  @media(max-width:800px){ .status-grid { grid-template-columns: repeat(2,1fr); } }
+  .scard {
+    background: var(--panel); border-radius: 14px;
+    padding: 18px 20px;
+  }
+  .scard .lbl {
+    font-size: 11px; font-weight: 500; color: var(--t3);
+    text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px;
+  }
+  .scard .val {
+    font-size: 26px; font-weight: 700; letter-spacing: -.03em;
+  }
+  .scard .desc { font-size: 12px; color: var(--t3); margin-top: 4px; }
+
+  /* Pipeline */
+  .pipeline {
+    display: grid;
+    grid-template-columns: 1fr 28px 1fr 28px 1fr 28px 1fr;
+    gap: 0; align-items: center; margin: 24px 0 0;
+  }
+  @media(max-width:800px){
+    .pipeline { grid-template-columns: 1fr; }
+    .arr { display: none; }
+  }
+  .pstep {
+    background: var(--panel); border-radius: 14px;
+    padding: 18px 16px;
+  }
+  .pstep .n {
+    font-size: 11px; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--blue); margin-bottom: 8px;
+  }
+  .pstep h3 { font-size: 15px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 6px; }
+  .pstep p  { font-size: 12px; color: var(--t3); margin: 2px 0; }
+  .arr { text-align: center; color: var(--t3); font-size: 18px; }
+  .pstep.done .n { color: var(--green); }
+
+  /* Baustein Status */
+  .blocks { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin: 24px 0 0; }
+  @media(max-width:700px){ .blocks { grid-template-columns: 1fr; } }
+  .block {
+    background: var(--panel); border-radius: 14px; padding: 20px 20px;
+  }
+  .block-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .block-hd h3 { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .chip {
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 6px;
+    letter-spacing: .02em;
+  }
+  .chip.done  { background: rgba(48,209,88,.15);  color: var(--green); }
+  .chip.live  { background: rgba(10,132,255,.15);  color: var(--blue); }
+  .chip.open  { background: rgba(255,159,10,.15);  color: var(--orng); }
+  .block ul { list-style: none; padding: 0; }
+  .block ul li {
+    font-size: 13px; color: var(--t3);
+    padding: 4px 0; border-bottom: .5px solid rgba(84,84,88,.3);
+    display: flex; align-items: flex-start; gap: 8px;
+  }
+  .block ul li:last-child { border-bottom: none; }
+  .block ul li::before { content: "·"; color: var(--t3); flex-shrink: 0; }
+
+  /* Strategy Table */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th {
+    font-size: 11px; font-weight: 500; color: var(--t3);
+    text-transform: uppercase; letter-spacing: .04em;
+    padding: 10px 14px; text-align: left;
+    border-bottom: .5px solid var(--sep);
+  }
+  td {
+    padding: 11px 14px;
+    border-bottom: .5px solid rgba(84,84,88,.3);
+    color: var(--t2); font-size: 13px;
+  }
+  tr:last-child td { border-bottom: none; }
+  .tw { background: var(--panel); border-radius: 14px; overflow: hidden; margin-top: 0; }
+
+  code {
+    background: var(--p2); padding: 2px 7px; border-radius: 5px;
+    font-size: 12px; font-family: "SF Mono", "Menlo", monospace;
+    color: var(--blue);
+  }
+
+  /* Example Signal */
+  .sig-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin: 24px 0 0; }
+  @media(max-width:600px){ .sig-grid { grid-template-columns: 1fr; } }
+  .sigcard {
+    background: var(--panel); border-radius: 14px; padding: 18px 20px;
+  }
+  .sigcard .k { font-size: 11px; color: var(--t3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+  .sigcard .v { font-size: 28px; font-weight: 700; letter-spacing: -.03em; }
+  .v.blue  { color: var(--blue); }
+  .v.green { color: var(--green); }
+  .v.red   { color: var(--red); }
+
+  /* Risk Table */
+  .risk-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin: 24px 0 0; }
+  @media(max-width:700px){ .risk-grid { grid-template-columns: repeat(2,1fr); } }
+  .rcard {
+    background: var(--panel); border-radius: 14px; padding: 16px 18px;
+  }
+  .rcard .k { font-size: 11px; color: var(--t3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+  .rcard .v { font-size: 22px; font-weight: 700; letter-spacing: -.02em; color: var(--blue); }
+
+  /* Warning */
+  .warn {
+    margin-top: 48px; padding: 16px 20px;
+    background: rgba(255,69,58,.08); border-left: 3px solid var(--red);
+    border-radius: 0 10px 10px 0; color: #ff9f9a;
+    font-size: 13px; line-height: 1.6; letter-spacing: -.01em;
+  }
+
+  /* File Tree */
+  .tree {
+    background: var(--panel); border-radius: 14px;
+    padding: 20px 24px; margin-top: 24px;
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 13px; line-height: 2;
+  }
+  .tree .dir  { color: var(--blue); font-weight: 600; }
+  .tree .file { color: var(--t2); }
+  .tree .note { color: var(--t3); }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Mick Trading Bot</h1>
-  <p class="sub">5m Anchor-Trigger Scalp · BTC/USDT Perpetual Futures · BingX</p>
-  <span class="badge">● PAPER TRADING — sendet KEINE Orders</span>
 
-  <h2>So funktioniert der Bot</h2>
-  <div class="pipeline">
-    <div class="step">
-      <div class="n">1 · DATEN</div>
-      <h3>BingX REST</h3>
-      <p>500 × 5m-Kerzen</p>
-      <p>Repaint-Schutz: nur geschlossene Kerzen</p>
-    </div>
-    <div class="step">
-      <div class="n">2 · INDIKATOREN</div>
-      <h3>WaveTrend + MFI</h3>
-      <p>wt1/wt2 (9/12/3) + Dots</p>
-      <p>Money Flow Index (14)</p>
-    </div>
-    <div class="step">
-      <div class="n">3 · SETUP</div>
-      <h3>Anker → Trigger</h3>
-      <p>MFI-Filter + Divergenz</p>
-      <p>Null-Kreuzung = invalid</p>
-    </div>
-    <div class="step out">
-      <div class="n">4 · LEVELS</div>
-      <h3>Entry · SL · TP1</h3>
-      <p>SL: Pivot ±0,3 %</p>
-      <p>RR 2:1, voller Exit</p>
-    </div>
-  </div>
+<!-- Header -->
+<div class="hdr">
+  <div class="wrap">
+    <h1>Mick Trading Bot</h1>
+    <div class="sub">5m Anchor-Trigger Scalp · BTC/USDT Perpetual Futures · BingX</div>
+    <div class="badge-live"><span class="dot"></span>Paper Trading aktiv — keine echten Orders</div>
 
-  <h2>Beispiel-Signal — Live-Test 2026-06-12</h2>
-  <div class="cards">
-    <div class="card"><div class="k">Entry (Long, Kerzenschluss)</div><div class="v blue">63 064.60</div></div>
-    <div class="card"><div class="k">Take Profit (RR 2:1)</div><div class="v green">63 950.06</div></div>
-    <div class="card"><div class="k">Stop Loss (Pivot −0,3 %)</div><div class="v red">62 621.87</div></div>
-  </div>
-
-  <h2>Strategie-Regeln (Kurzfassung)</h2>
-  <table>
-    <tr><th>Element</th><th>Regel</th></tr>
-    <tr><td>Anker</td><td>erste WaveTrend-Welle jenseits ±60</td></tr>
-    <tr><td>Trigger</td><td>folgende Welle mit Dot, Extrem näher an 0 als Anker, <code>|wt1| ≥ 50</code></td></tr>
-    <tr><td>MFI-Filter</td><td><code>MFI(Trigger) &gt; MFI(Anker)</code> — entfällt bei aktiver Divergenz</td></tr>
-    <tr><td>Entry</td><td>Schluss der Trigger-Kerze</td></tr>
-    <tr><td>Stop Loss</td><td>Pivot (5 Kerzen) ± 0,3 %, min. 0,3 % Abstand</td></tr>
-    <tr><td>Take Profit</td><td>volle Position bei RR 2:1</td></tr>
-    <tr><td>Invalidierung</td><td>wt1 kreuzt Null-Linie</td></tr>
-    <tr><td>Risiko / Hebel</td><td>1 % pro Trade · 3× · max. 1 Position · −3 % Tagesstopp</td></tr>
-  </table>
-
-  <div class="warn">
-    ⚠ Keine Anlageberatung. Mehrere Werte sind Startannahmen, die erst im Paper Trading
-    kalibriert werden. In dieser Phase werden KEINE echten Orders gesendet.
+    <!-- Status Cards -->
+    <div class="status-grid" style="text-align:left">
+      <div class="scard">
+        <div class="lbl">Phase</div>
+        <div class="val" style="font-size:20px;color:var(--blue)">Paper Trading</div>
+        <div class="desc">Simulation ohne echtes Kapital</div>
+      </div>
+      <div class="scard">
+        <div class="lbl">Startkapital</div>
+        <div class="val">1.000</div>
+        <div class="desc">USDT (simuliert)</div>
+      </div>
+      <div class="scard">
+        <div class="lbl">Risiko / Trade</div>
+        <div class="val" style="color:var(--orng)">1 %</div>
+        <div class="desc">max. 3× Hebel · 1 Position</div>
+      </div>
+      <div class="scard">
+        <div class="lbl">Tagesstopp</div>
+        <div class="val" style="color:var(--red)">−3 %</div>
+        <div class="desc">Risk-Gate pausiert Bot</div>
+      </div>
+    </div>
   </div>
 </div>
+
+<div class="wrap">
+
+  <!-- Pipeline -->
+  <h2>Pipeline — wie jede 5m-Kerze verarbeitet wird</h2>
+  <div class="pipeline">
+    <div class="pstep done">
+      <div class="n">01 · Daten</div>
+      <h3>BingX REST</h3>
+      <p>500 × 5m-Kerzen</p>
+      <p>Repaint-Schutz aktiv</p>
+      <p>Preis-Snapshot</p>
+    </div>
+    <div class="arr">›</div>
+    <div class="pstep done">
+      <div class="n">02 · Indikatoren</div>
+      <h3>WaveTrend + MFI</h3>
+      <p>wt1/wt2 (9/12/3)</p>
+      <p>Green/Red Dots</p>
+      <p>MFI(14)</p>
+    </div>
+    <div class="arr">›</div>
+    <div class="pstep done">
+      <div class="n">03 · Setup-Erkennung</div>
+      <h3>Anker → Trigger</h3>
+      <p>MFI-Filter</p>
+      <p>Divergenz-Check</p>
+      <p>Null-Kreuzung = invalid</p>
+    </div>
+    <div class="arr">›</div>
+    <div class="pstep done">
+      <div class="n">04 · Ausführung</div>
+      <h3>Paper Engine</h3>
+      <p>Entry · SL · TP1</p>
+      <p>Size-Berechnung</p>
+      <p>Journal + State</p>
+    </div>
+  </div>
+
+  <!-- Bausteine -->
+  <h2>Bausteine — Implementierungsstatus</h2>
+  <div class="blocks">
+
+    <div class="block">
+      <div class="block-hd">
+        <h3>Baustein A — Exchange</h3>
+        <span class="chip done">✓ Fertig</span>
+      </div>
+      <ul>
+        <li>BingX REST-Wrapper (read-only)</li>
+        <li>500 × 5m-Kerzen mit Repaint-Schutz</li>
+        <li>BOM-Fix für Windows UTF-8</li>
+        <li>API-Key aus <code>.env</code> (nie in Code)</li>
+        <li>Kein Balance-Call in Paper-Phase</li>
+      </ul>
+    </div>
+
+    <div class="block">
+      <div class="block-hd">
+        <h3>Baustein B — Paper Loop</h3>
+        <span class="chip done">✓ Fertig</span>
+      </div>
+      <ul>
+        <li>27/27 Unit-Tests bestanden</li>
+        <li>Takt: 5m-UTC-Grenze + 5s Puffer</li>
+        <li>State-Persistenz über Neustart</li>
+        <li>SL-first bei Kerzen-Konflikt</li>
+        <li>Risk-Gate: −3 % Tagesstopp</li>
+        <li>Dedup-Schutz gegen Doppel-Entry</li>
+      </ul>
+    </div>
+
+    <div class="block">
+      <div class="block-hd">
+        <h3>Baustein C — Dashboard</h3>
+        <span class="chip live">● Live</span>
+      </div>
+      <ul>
+        <li>Apple Dark Mode Design</li>
+        <li>Auto-Refresh alle 30 s</li>
+        <li>Balance-Kurve (Chart.js, blau)</li>
+        <li>PnL pro Trade (grün/rot Balken)</li>
+        <li>Offene Position live</li>
+        <li>Trade-Journal mit allen Spalten</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- Beispiel-Signal -->
+  <h2>Beispiel-Signal — Live-Test 2026-06-12</h2>
+  <div class="sig-grid">
+    <div class="sigcard">
+      <div class="k">Entry · Long · Kerzenschluss</div>
+      <div class="v blue">63 064,60</div>
+    </div>
+    <div class="sigcard">
+      <div class="k">Take Profit · RR 2:1</div>
+      <div class="v green">63 950,06</div>
+    </div>
+    <div class="sigcard">
+      <div class="k">Stop Loss · Pivot −0,3 %</div>
+      <div class="v red">62 621,87</div>
+    </div>
+  </div>
+
+  <!-- Strategie-Regeln -->
+  <h2>Strategie-Regeln</h2>
+  <div class="tw">
+    <table>
+      <tr><th>Element</th><th>Regel</th></tr>
+      <tr><td>Anker</td><td>Erste WaveTrend-Welle jenseits ±60</td></tr>
+      <tr><td>Trigger</td><td>Folgende Welle mit Dot · Extrem näher an 0 als Anker · <code>|wt1| ≥ 50</code></td></tr>
+      <tr><td>MFI-Filter</td><td><code>MFI(Trigger) &gt; MFI(Anker)</code> — entfällt bei aktiver Divergenz</td></tr>
+      <tr><td>Entry</td><td>Schluss der Trigger-Kerze (<code>candle_close</code>)</td></tr>
+      <tr><td>Stop Loss</td><td>Pivot (5 Kerzen) ± 0,3 % · min. 0,3 % Abstand</td></tr>
+      <tr><td>Take Profit</td><td>Volle Position bei RR 2:1 — kein Teilausstieg</td></tr>
+      <tr><td>Invalidierung</td><td>wt1 kreuzt Null-Linie → Setup ungültig</td></tr>
+      <tr><td>Warmup</td><td>Erste 100 Kerzen nach Datenbeginn ignoriert</td></tr>
+    </table>
+  </div>
+
+  <!-- Risiko -->
+  <h2>Risiko &amp; Position-Sizing</h2>
+  <div class="risk-grid">
+    <div class="rcard"><div class="k">Risiko/Trade</div><div class="v">1 %</div></div>
+    <div class="rcard"><div class="k">Max. Hebel</div><div class="v">3×</div></div>
+    <div class="rcard"><div class="k">Tagesstopp</div><div class="v" style="color:var(--red)">−3 %</div></div>
+    <div class="rcard"><div class="k">Max. Positionen</div><div class="v">1</div></div>
+  </div>
+
+  <!-- Projektstruktur -->
+  <h2>Projektstruktur</h2>
+  <div class="tree">
+    <span class="dir">Market Cipher/</span><br>
+    &nbsp;&nbsp;<span class="dir">config/</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">config.yaml</span>&nbsp;&nbsp;<span class="note"># alle Parameter, kein Hardcoding</span><br>
+    &nbsp;&nbsp;<span class="dir">src/</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">exchange/</span><span class="file">  bingx_client.py</span>&nbsp;&nbsp;<span class="note"># REST-Wrapper (read-only)</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">paper/</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">paper_engine.py</span>&nbsp;&nbsp;<span class="note"># Entscheidungslogik</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">journal.py</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="note"># State + trades.csv</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">position.py</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="note"># Position-Datenklasse</span><br>
+    &nbsp;&nbsp;<span class="dir">scripts/</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">run_paper_loop.py</span>&nbsp;<span class="note"># Haupt-Loop (5m-Takt)</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">dashboard.html</span>&nbsp;&nbsp;&nbsp;<span class="note"># Live-Dashboard (Apple Dark Mode)</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">test_paper_engine.py</span>&nbsp;<span class="note"># 27 Unit-Tests</span><br>
+    &nbsp;&nbsp;<span class="dir">data/</span>&nbsp;&nbsp;<span class="note"># gitignored</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">state.json</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="note"># Balance, offene Position</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">trades.csv</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="note"># Trade-Journal</span><br>
+    &nbsp;&nbsp;<span class="file">.env</span>&nbsp;&nbsp;<span class="note"># API-Keys — gitignored, nie committen</span>
+  </div>
+
+  <!-- Disclaimer -->
+  <div class="warn">
+    ⚠ Keine Anlageberatung. Alle Parameter sind Startannahmen die im Paper Trading kalibriert werden.
+    In dieser Phase werden <strong>keine echten Orders</strong> gesendet — reine Simulation.
+    Backtesting-Ergebnisse sind keine Garantie für zukünftige Ergebnisse.
+  </div>
+
+</div><!-- /wrap -->
 </body>
 </html>
