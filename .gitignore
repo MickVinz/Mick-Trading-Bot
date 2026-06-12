@@ -17,6 +17,7 @@ env/
 # --- Projekt-Ausgaben ---
 logs/
 outputs/
+data/
 
 # --- OS / Editor ---
 .DS_Store

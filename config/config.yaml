@@ -111,3 +111,12 @@ risk:
   leverage: 3                 # konservativer Start
   max_open_positions: 1
   max_daily_loss_pct: 3.0     # bei -3 % Tagesverlust pausiert der Bot
+
+# -----------------------------------------------------------------------------
+# Paper-Trading-Parameter (Baustein B)
+# -----------------------------------------------------------------------------
+paper_trading:
+  start_balance: 1000.0       # USDT-Startkapital (nur bei erstem Start / kein state.json)
+  risk_pct: 1.0               # Risiko pro Trade in % der aktuellen Balance (Casper-Standard)
+  leverage_cap: 3.0           # Notional-Cap: qty × entry ≤ balance × leverage_cap
+  max_daily_loss_pct: 3.0     # Risk-Gate: kein neuer Entry wenn Tages-PnL ≤ -3 %
