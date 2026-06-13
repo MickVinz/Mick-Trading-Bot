@@ -28,7 +28,7 @@ _CSV_COLUMNS = [
     "entry", "sl", "tp1",
     "exit_price", "exit_reason",
     "qty", "risk_pct", "rr",
-    "pnl_usd", "pnl_pct", "balance_after",
+    "pnl_usd", "pnl_pct", "fees_usd", "balance_after",
     "divergence",
 ]
 
@@ -176,14 +176,20 @@ class Journal:
         exit_price: float,
         exit_reason: str,
         balance_after: float,
+        pnl_usd: Optional[float] = None,
+        fees_usd: float = 0.0,
     ) -> None:
         """
         Hängt eine Zeile an trades.csv an.
 
         exit_reason : 'tp1' oder 'sl'
-        balance_after: Balance NACH Anrechnung des PnL.
+        balance_after: Balance NACH Anrechnung des NETTO-PnL.
+        pnl_usd : realisierter NETTO-PnL (nach Gebühren/Slippage). None →
+                  Brutto aus position.pnl(exit_price) (Abwärtskompatibilität).
+        fees_usd: angefallene Round-Trip-Kosten (Gebühren + Slippage).
         """
-        pnl_usd = position.pnl(exit_price)
+        if pnl_usd is None:
+            pnl_usd = position.pnl(exit_price)
         balance_before = balance_after - pnl_usd
 
         risk_usd = position.qty * abs(position.entry - position.sl)
@@ -206,6 +212,7 @@ class Journal:
             "rr": round(rr, 3),
             "pnl_usd": round(pnl_usd, 4),
             "pnl_pct": round(pnl_pct, 4),
+            "fees_usd": round(fees_usd, 4),
             "balance_after": round(balance_after, 4),
             "divergence": position.divergence,
         }

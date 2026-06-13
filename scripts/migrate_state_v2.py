@@ -23,7 +23,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 _NEW_HEADER = [
     "symbol", "entry_time", "exit_time", "direction", "entry", "sl", "tp1",
     "exit_price", "exit_reason", "qty", "risk_pct", "rr", "pnl_usd", "pnl_pct",
-    "balance_after", "divergence",
+    "fees_usd", "balance_after", "divergence",
 ]
 
 
@@ -66,7 +66,11 @@ def migrate_trades(path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(_NEW_HEADER)
-        for row in rows[1:]:   # alte Headerzeile verwerfen, Daten mit BTC/USDT praefixen
+        for row in rows[1:]:   # alte Headerzeile verwerfen
+            # Alt-Format (15 Spalten, ohne symbol/fees_usd): symbol vorn + fees_usd=0.0
+            # vor balance_after (vorletzte Spalte) einfuegen.
+            if len(row) == 15:
+                row = [*row[:13], "0.0", *row[13:]]
             w.writerow(["BTC/USDT", *row])
     print("  trades.csv -> symbol-Spalte ergaenzt (Backup: trades.csv.bak).")
 

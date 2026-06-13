@@ -68,6 +68,42 @@ def check_exit(
     return None, None
 
 
+def exit_costs(
+    position: Position,
+    exit_price: float,
+    exit_reason: str,
+    pt_cfg: dict,
+) -> float:
+    """
+    Round-Trip-Handelskosten in USDT für das Schließen einer Position.
+
+    Modell (konservativ, BingX-realistisch):
+      - Taker-Gebühr auf BEIDE Legs (Entry = Market bei Kerzenschluss,
+        SL = Stop-Market). `taker_fee_pct` je Seite.
+      - Slippage (`slippage_pct`) auf JEDEN Market-Fill:
+          * Entry slippt immer (Market-Order).
+          * SL slippt (Stop-Market).
+          * TP1 slippt NICHT — Limit-Order füllt am Zielpreis.
+
+    Alle Kosten werden auf das jeweilige Notional (qty × Preis) gerechnet und
+    beim Close in einem Betrag verrechnet (Entry bleibt unangetastet).
+    Ohne Gebühren-Config (Defaults 0) ist das Ergebnis 0.0 — fee-frei.
+    """
+    taker = float(pt_cfg.get("taker_fee_pct", 0.0)) / 100.0
+    slip = float(pt_cfg.get("slippage_pct", 0.0)) / 100.0
+    qty = position.qty
+
+    entry_notional = qty * position.entry
+    exit_notional = qty * exit_price
+
+    entry_fee = entry_notional * taker
+    exit_fee = exit_notional * taker
+    entry_slip = entry_notional * slip                      # Market-Entry: immer
+    exit_slip = exit_notional * slip if exit_reason == "sl" else 0.0  # TP=Limit: 0
+
+    return round(entry_fee + exit_fee + entry_slip + exit_slip, 8)
+
+
 def size_qty(balance: float, entry: float, sl: float, pt_cfg: dict) -> float:
     """
     Berechnet die Positionsgröße in Coin-Einheiten.
@@ -130,11 +166,12 @@ def _is_new_candle(journal: Journal, symbol: str, last_ts: pd.Timestamp) -> bool
 # Per-Symbol-Entscheidungen (testbar ohne BingX-Verbindung)
 # ---------------------------------------------------------------------------
 
-def _exit_symbol(symbol: str, df: pd.DataFrame, journal: Journal) -> dict:
+def _exit_symbol(symbol: str, df: pd.DataFrame, journal: Journal, pt_cfg: dict) -> dict:
     """
     PHASE-1-Baustein: prüft die offene Position eines Symbols gegen die letzte
-    Kerze. Bucht ggf. realisierten PnL auf die geteilte Balance, schließt die
-    Position und schreibt den Trade. KEIN Dedup (das macht der Aufrufer).
+    Kerze. Bucht ggf. realisierten NETTO-PnL (nach Gebühren + Slippage) auf die
+    geteilte Balance, schließt die Position und schreibt den Trade.
+    KEIN Dedup (das macht der Aufrufer).
     """
     state = journal.state
     last_candle = df.iloc[-1]
@@ -155,13 +192,16 @@ def _exit_symbol(symbol: str, df: pd.DataFrame, journal: Journal) -> dict:
     if reason is None:
         return result
 
-    pnl_usd = position.pnl(exit_price)
+    gross_pnl = position.pnl(exit_price)
+    fees = exit_costs(position, exit_price, reason, pt_cfg)
+    pnl_usd = gross_pnl - fees                         # NETTO nach Kosten
     state["balance"] += pnl_usd
     state["realized_pnl_today"] = state.get("realized_pnl_today", 0.0) + pnl_usd
     journal.set_position(symbol, None)
     journal.record_trade(
         symbol=symbol, position=position, exit_time=last_ts,
         exit_price=exit_price, exit_reason=reason,
+        pnl_usd=pnl_usd, fees_usd=fees,
         balance_after=state["balance"],
     )
     result["exit_reason"] = reason
@@ -241,7 +281,7 @@ def _decide_symbol(
     if not _is_new_candle(journal, symbol, last_ts):
         return result
 
-    result.update(_exit_symbol(symbol, df, journal))
+    result.update(_exit_symbol(symbol, df, journal, config.get("paper_trading", {})))
     result.update(_enter_symbol(symbol, df, setups, journal, config, gate_open))
     journal.set_last_candle_time(symbol, last_ts.isoformat())
     return result
@@ -305,9 +345,10 @@ def run_cycle(journal: Journal, config: dict, _per_symbol=None) -> dict:
             fresh[symbol] = (df, setups)
 
     # PHASE 1 — EXITS zuerst (Balance wird aktualisiert).
+    pt_cfg = config.get("paper_trading", {})
     results = {}
     for symbol, (df, _setups) in fresh.items():
-        results[symbol] = _exit_symbol(symbol, df, journal)
+        results[symbol] = _exit_symbol(symbol, df, journal, pt_cfg)
 
     # PHASE 2 — ENTRIES gegen aktualisierte Balance, geteiltes Gate.
     gate = _gate_open(journal.state, config)
