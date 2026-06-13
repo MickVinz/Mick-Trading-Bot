@@ -23,6 +23,7 @@ from src.paper.position import Position
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
 _CSV_COLUMNS = [
+    "symbol",
     "entry_time", "exit_time", "direction",
     "entry", "sl", "tp1",
     "exit_price", "exit_reason",
@@ -30,6 +31,9 @@ _CSV_COLUMNS = [
     "pnl_usd", "pnl_pct", "balance_after",
     "divergence",
 ]
+
+# State-Schema-Version (v2 = Multi-Coin). v1 = altes single-symbol-Schema.
+_STATE_VERSION = 2
 
 
 class Journal:
@@ -63,32 +67,102 @@ class Journal:
     # ------------------------------------------------------------------
 
     def _load_state(self) -> dict:
-        """Liest state.json oder legt einen frischen Zustand an."""
-        if self._state_path.exists():
-            with open(self._state_path, encoding="utf-8") as f:
-                raw = json.load(f)
-            # Position rekonstruieren, falls vorhanden
-            if raw.get("open_position"):
-                raw["open_position"] = Position.from_dict(raw["open_position"])
-            return raw
+        """
+        Liest state.json oder legt frischen v2-Zustand an.
+        Migriert ein altes v1-state.json (single open_position) automatisch
+        nach v2 (positions-Dict). Vor der Migration wird ein Backup geschrieben.
+        """
+        if not self._state_path.exists():
+            return self._fresh_state()
 
-        # Erster Start: frischer Zustand mit Start-Balance.
+        with open(self._state_path, encoding="utf-8") as f:
+            raw = json.load(f)
+
+        # v1 erkennen: hat 'open_position' (single) statt 'positions' (dict).
+        if "positions" not in raw:
+            return self._migrate_v1_to_v2(raw)
+
+        # v2: Positionen rekonstruieren.
+        positions = {}
+        for symbol, pdict in (raw.get("positions") or {}).items():
+            positions[symbol] = Position.from_dict(pdict) if pdict else None
+        raw["positions"] = positions
+        raw.setdefault("last_candle_time", {})
+        return raw
+
+    def _fresh_state(self) -> dict:
+        """Frischer v2-Zustand mit geteilter Start-Balance."""
         return {
+            "version": _STATE_VERSION,
             "balance": self.start_balance,
-            "open_position": None,
+            "positions": {},            # symbol -> Position | nicht vorhanden = flach
             "day_start_balance": self.start_balance,
-            "day": "",                  # wird beim ersten run_once gesetzt
+            "day": "",
             "realized_pnl_today": 0.0,
-            "last_candle_time": None,   # Dedup: letzte verarbeitete Kerze
+            "last_candle_time": {},     # symbol -> ISO-String der letzten Kerze
+        }
+
+    def _migrate_v1_to_v2(self, raw: dict) -> dict:
+        """
+        Wandelt altes single-symbol-State in v2 um. Backup vorher.
+        Die alte Position wandert nach positions['BTC/USDT'] (Altsystem war BTC).
+        """
+        backup = self._state_path.with_suffix(".json.bak")
+        with open(backup, "w", encoding="utf-8") as f:
+            json.dump(raw, f, indent=2)
+
+        old_pos = raw.get("open_position")
+        old_lct = raw.get("last_candle_time")
+
+        positions = {}
+        if old_pos:
+            positions["BTC/USDT"] = Position.from_dict(old_pos)
+
+        return {
+            "version": _STATE_VERSION,
+            "balance": float(raw.get("balance", self.start_balance)),
+            "positions": positions,
+            "day_start_balance": float(
+                raw.get("day_start_balance", raw.get("balance", self.start_balance))
+            ),
+            "day": raw.get("day", ""),
+            "realized_pnl_today": float(raw.get("realized_pnl_today", 0.0)),
+            "last_candle_time": {"BTC/USDT": old_lct} if old_lct else {},
         }
 
     def save_state(self) -> None:
-        """Schreibt den aktuellen Zustand in state.json."""
+        """Schreibt den aktuellen v2-Zustand in state.json."""
         raw = dict(self.state)
-        if isinstance(raw.get("open_position"), Position):
-            raw["open_position"] = raw["open_position"].to_dict()
+        raw["positions"] = {
+            symbol: (pos.to_dict() if isinstance(pos, Position) else None)
+            for symbol, pos in self.state.get("positions", {}).items()
+        }
         with open(self._state_path, "w", encoding="utf-8") as f:
             json.dump(raw, f, indent=2, default=str)
+
+    # ------------------------------------------------------------------
+    # Per-Symbol-Zugriff
+    # ------------------------------------------------------------------
+
+    def get_position(self, symbol: str):
+        """Offene Position fuer ein Symbol oder None (flach)."""
+        return self.state.get("positions", {}).get(symbol)
+
+    def set_position(self, symbol: str, position) -> None:
+        """Setzt (oder loescht via None) die Position fuer ein Symbol."""
+        self.state.setdefault("positions", {})
+        if position is None:
+            self.state["positions"].pop(symbol, None)
+        else:
+            self.state["positions"][symbol] = position
+
+    def get_last_candle_time(self, symbol: str):
+        """ISO-String der zuletzt verarbeiteten Kerze fuer ein Symbol oder None."""
+        return self.state.get("last_candle_time", {}).get(symbol)
+
+    def set_last_candle_time(self, symbol: str, iso_ts: str) -> None:
+        self.state.setdefault("last_candle_time", {})
+        self.state["last_candle_time"][symbol] = iso_ts
 
     # ------------------------------------------------------------------
     # Trade-Protokoll
@@ -96,6 +170,7 @@ class Journal:
 
     def record_trade(
         self,
+        symbol: str,
         position: Position,
         exit_time: pd.Timestamp,
         exit_price: float,
@@ -117,6 +192,7 @@ class Journal:
         risk_pct = abs(position.entry - position.sl) / position.entry * 100
 
         row = {
+            "symbol": symbol,
             "entry_time": position.entry_time.strftime("%Y-%m-%d %H:%M"),
             "exit_time": exit_time.strftime("%Y-%m-%d %H:%M"),
             "direction": position.direction,
