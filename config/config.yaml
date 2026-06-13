@@ -7,8 +7,23 @@
 # =============================================================================
 
 market:
-  symbol: "BTC/USDT"          # BTC/USDT Perpetual Futures (BingX)
   timeframe: "5m"             # Spec: 5 Minuten
+  symbols:                    # Multi-Coin: alle BingX-Perpetuals, 24/7
+    - "BTC/USDT"
+    - "ETH/USDT"
+    - "SOL/USDT"
+    - "DOGE/USDT"
+    - "BNB/USDT"
+    - "ADA/USDT"
+
+# Optionale Overrides pro Coin (anfangs leer -> globale Defaults gelten).
+# Beispiel (auskommentiert) dokumentiert nur die Struktur:
+symbol_overrides: {}
+  # "SOL/USDT":
+  #   stop_loss:
+  #     buffer_pct: 0.5
+  #   anchor_trigger:
+  #     trigger_min_abs_wt1: 55
 
 # -----------------------------------------------------------------------------
 # Abschnitt 1: WaveTrend (LazyBear) — Dot-Signal
@@ -109,14 +124,14 @@ divergence:
 risk:
   risk_per_trade_pct: 1.0     # 1 % des Kapitals pro Trade (Casper-Standard)
   leverage: 3                 # konservativer Start
-  max_open_positions: 1
-  max_daily_loss_pct: 3.0     # bei -3 % Tagesverlust pausiert der Bot
+  max_open_positions: 6       # GEAENDERT: kein echtes Parallel-Limit (= Anzahl Coins)
+  max_daily_loss_pct: 10.0    # GEAENDERT (war 3.0): bei -10 % Tagesverlust pausiert der Bot
 
 # -----------------------------------------------------------------------------
 # Paper-Trading-Parameter (Baustein B)
 # -----------------------------------------------------------------------------
 paper_trading:
-  start_balance: 1000.0       # USDT-Startkapital (nur bei erstem Start / kein state.json)
+  start_balance: 1000.0       # EINE geteilte Balance ueber alle Coins (nur bei erstem Start / kein state.json)
   risk_pct: 1.0               # Risiko pro Trade in % der aktuellen Balance (Casper-Standard)
   leverage_cap: 3.0           # Notional-Cap: qty × entry ≤ balance × leverage_cap
-  max_daily_loss_pct: 3.0     # Risk-Gate: kein neuer Entry wenn Tages-PnL ≤ -3 %
+  max_daily_loss_pct: 10.0    # GEAENDERT (war 3.0): kein neuer Entry wenn Tages-PnL ≤ -10 %
