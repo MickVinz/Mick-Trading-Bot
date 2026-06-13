@@ -9,11 +9,16 @@ $ProjectDir     = "E:\TRADING\Market Cipher"
 $TaskName       = "MickBot-Watchdog"
 $WatchdogScript = "$ProjectDir\scripts\watchdog.py"
 
+# pythonw.exe = Python ohne Konsolenfenster (laeuft unsichtbar im Hintergrund)
 $Python = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $Python) {
     Write-Host "FEHLER: Python nicht im PATH." -ForegroundColor Red
     Read-Host "Enter"
     exit 1
+}
+$Python = $Python -replace "python\.exe$", "pythonw.exe"
+if (-not (Test-Path $Python)) {
+    $Python = (Get-Command python -ErrorAction SilentlyContinue).Source
 }
 
 if (-not (Test-Path $WatchdogScript)) {

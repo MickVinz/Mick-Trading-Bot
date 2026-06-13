@@ -1,5 +1,5 @@
 """
-Tests für die Paper-Trading-Engine.
+Tests für die Paper-Trading-Engine (Multi-Coin).
 
 Alle Tests laufen ohne Netzwerkzugriff (synthetische Kerzen + Setups).
 Kein Pytest nötig — direkt ausführbar:
@@ -17,7 +17,10 @@ Getestet werden:
     9.  Kein Doppel-Entry (zweite Kerze ohne neues Signal → keine neue Position)
     10. TP-Exit-Ablauf: Entry → TP-Kerze → Balance steigt
     11. SL-Exit-Ablauf: Entry → SL-Kerze → Balance sinkt
-    12. -3%-Risk-Gate: kein Entry nach Tagesverlust
+    12. Risk-Gate (gate_open=False) → kein Entry
+    13. run_cycle: zwei Coins, Exit BTC + Entry ETH im selben Zyklus
+    14. run_cycle: kein Parallel-Limit — beide Coins gleichzeitig offen
+    15. run_cycle: geteiltes Tageslimit pausiert ALLE Entries
 """
 
 import json
@@ -34,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.paper.journal import Journal
-from src.paper.paper_engine import _make_decision, check_exit, size_qty
+from src.paper.paper_engine import _decide_symbol, _gate_open, check_exit, run_cycle, size_qty
 from src.paper.position import Position
 
 # ---------------------------------------------------------------------------
@@ -42,14 +45,13 @@ from src.paper.position import Position
 # ---------------------------------------------------------------------------
 
 _BASE_CONFIG = {
-    "market": {"symbol": "BTC/USDT", "timeframe": "5m"},
+    "market": {"symbols": ["BTC/USDT"], "timeframe": "5m"},
     "paper_trading": {
         "start_balance": 1000.0,
         "risk_pct": 1.0,
         "leverage_cap": 3.0,
         "max_daily_loss_pct": 3.0,
     },
-    # Minimale Felder, damit _make_decision nicht auf fehlende Keys stößt
 }
 
 
@@ -159,7 +161,6 @@ def test_check_exit_sl_long():
 def test_check_exit_both_sl_wins():
     pos = Position(entry=100.0, sl=99.0, tp1=102.0, qty=1.0,
                    direction="long", entry_time=_ts(), divergence=False)
-    # Kerze berührt sowohl low=98.5 (≤SL=99) als auch high=102.5 (≥TP=102)
     candle = _candle(_ts(5), close=100.0, high=102.5, low=98.5)
     reason, price = check_exit(pos, candle)
     _assert(reason == "sl", "3. check_exit Konflikt: SL gewinnt")
@@ -180,12 +181,10 @@ def test_check_exit_no_hit():
 def test_check_exit_short():
     pos = Position(entry=100.0, sl=101.0, tp1=98.0, qty=1.0,
                    direction="short", entry_time=_ts(), divergence=False)
-    # TP: low ≤ tp1=98 → hit
     candle_tp = _candle(_ts(5), close=98.5, high=99.5, low=97.5)
     reason, price = check_exit(pos, candle_tp)
     _assert(reason == "tp1", "5. check_exit Short TP: reason='tp1'")
 
-    # SL: high ≥ sl=101 → hit
     candle_sl = _candle(_ts(5), close=100.5, high=101.5, low=100.0)
     reason, price = check_exit(pos, candle_sl)
     _assert(reason == "sl", "5. check_exit Short SL: reason='sl'")
@@ -195,9 +194,8 @@ def test_check_exit_short():
 def test_state_fresh_start():
     with tempfile.TemporaryDirectory() as tmp:
         j = _make_journal(_BASE_CONFIG, Path(tmp))
-        _assert(j.state["balance"] == 1000.0,
-                "6. Fresh start: balance=1000")
-        _assert(j.state["open_position"] is None,
+        _assert(j.state["balance"] == 1000.0, "6. Fresh start: balance=1000")
+        _assert(j.get_position("BTC/USDT") is None,
                 "6. Fresh start: keine offene Position")
 
 
@@ -222,11 +220,11 @@ def test_entry_valid_setup():
         df = _make_df([_candle(last_ts)])
         setups = _make_setup(last_ts, direction="long", entry=100.0, sl=99.0, tp1=102.0)
 
-        result = _make_decision(df, setups, j, _BASE_CONFIG)
+        result = _decide_symbol("BTC/USDT", df, setups, j, _BASE_CONFIG, gate_open=True)
         _assert(result["entry_taken"], "8. Entry genommen bei gültigem Setup")
         _assert(result["setup_found"], "8. setup_found=True")
-        _assert(j.state["open_position"] is not None, "8. Position in State")
-        _assert(j.state["open_position"].direction == "long",
+        _assert(j.get_position("BTC/USDT") is not None, "8. Position in State")
+        _assert(j.get_position("BTC/USDT").direction == "long",
                 "8. Position direction=long")
 
 
@@ -238,10 +236,8 @@ def test_no_double_entry():
         df = _make_df([_candle(last_ts)])
         setups = _make_setup(last_ts)
 
-        _make_decision(df, setups, j, _BASE_CONFIG)   # erster Durchlauf: Entry
-
-        # Zweiter Durchlauf mit GLEICHER Kerze → Dedup greift
-        result2 = _make_decision(df, setups, j, _BASE_CONFIG)
+        _decide_symbol("BTC/USDT", df, setups, j, _BASE_CONFIG, gate_open=True)
+        result2 = _decide_symbol("BTC/USDT", df, setups, j, _BASE_CONFIG, gate_open=True)
         _assert(not result2["entry_taken"],
                 "9. Kein Doppel-Entry bei gleicher Kerze (Dedup)")
 
@@ -251,23 +247,21 @@ def test_tp_exit_full_flow():
     with tempfile.TemporaryDirectory() as tmp:
         j = _make_journal(_BASE_CONFIG, Path(tmp))
 
-        # Kerze 0: Entry-Signal
         ts0 = _ts(0)
         df0 = _make_df([_candle(ts0, close=100.0)])
         setups = _make_setup(ts0, entry=100.0, sl=99.0, tp1=102.0)
-        _make_decision(df0, setups, j, _BASE_CONFIG)
+        _decide_symbol("BTC/USDT", df0, setups, j, _BASE_CONFIG, gate_open=True)
 
         balance_after_entry = j.state["balance"]
-        pos = j.state["open_position"]
+        pos = j.get_position("BTC/USDT")
         _assert(pos is not None, "10. Position nach Entry geöffnet")
 
-        # Kerze 1: TP getroffen (high=102.5 ≥ tp1=102)
         ts1 = _ts(5)
         df1 = _make_df([_candle(ts0), _candle(ts1, close=101.5, high=102.5, low=100.5)])
-        result = _make_decision(df1, pd.DataFrame(), j, _BASE_CONFIG)
+        result = _decide_symbol("BTC/USDT", df1, pd.DataFrame(), j, _BASE_CONFIG, gate_open=True)
 
         _assert(result["exit_reason"] == "tp1", "10. Exit via TP1")
-        _assert(j.state["open_position"] is None, "10. Position geschlossen")
+        _assert(j.get_position("BTC/USDT") is None, "10. Position geschlossen")
         _assert(j.state["balance"] > balance_after_entry,
                 "10. Balance nach TP-Exit höher als Einstieg")
         _assert(j._trades_path.exists(), "10. trades.csv angelegt")
@@ -281,38 +275,114 @@ def test_sl_exit_full_flow():
         ts0 = _ts(0)
         df0 = _make_df([_candle(ts0, close=100.0)])
         setups = _make_setup(ts0, entry=100.0, sl=99.0, tp1=102.0)
-        _make_decision(df0, setups, j, _BASE_CONFIG)
+        _decide_symbol("BTC/USDT", df0, setups, j, _BASE_CONFIG, gate_open=True)
 
         start_bal = j.state["balance"]
 
         ts1 = _ts(5)
         df1 = _make_df([_candle(ts0), _candle(ts1, close=98.5, high=99.0, low=98.0)])
-        result = _make_decision(df1, pd.DataFrame(), j, _BASE_CONFIG)
+        result = _decide_symbol("BTC/USDT", df1, pd.DataFrame(), j, _BASE_CONFIG, gate_open=True)
 
         _assert(result["exit_reason"] == "sl", "11. Exit via SL")
         _assert(j.state["balance"] < start_bal, "11. Balance nach SL-Exit gesunken")
 
 
-# --- 12. -3%-Risk-Gate ---
+# --- 12. Risk-Gate: gate_open=False → kein Entry ---
 def test_risk_gate():
     with tempfile.TemporaryDirectory() as tmp:
         j = _make_journal(_BASE_CONFIG, Path(tmp))
 
-        # Manuell Tagesverlust ≥ -3% setzen
         today = pd.Timestamp.now(tz="utc").strftime("%Y-%m-%d")
         j.state["day"] = today
         j.state["day_start_balance"] = 1000.0
         j.state["realized_pnl_today"] = -30.0   # -3% exakt → Gate aktiv
 
+        gate = _gate_open(j.state, _BASE_CONFIG)
+        _assert(not gate, "12. _gate_open bei -3% Tagesverlust = False")
+
         last_ts = _ts(0)
         df = _make_df([_candle(last_ts)])
         setups = _make_setup(last_ts)
 
-        result = _make_decision(df, setups, j, _BASE_CONFIG)
+        result = _decide_symbol("BTC/USDT", df, setups, j, _BASE_CONFIG, gate_open=gate)
         _assert(not result["entry_taken"],
-                "12. Risk-Gate: kein Entry bei -3% Tagesverlust")
-        _assert(j.state["open_position"] is None,
+                "12. Risk-Gate: kein Entry bei geschlossenem Gate")
+        _assert(j.get_position("BTC/USDT") is None,
                 "12. Risk-Gate: keine offene Position")
+
+
+# --- 13. run_cycle: zwei Coins, Exit BTC + Entry ETH im selben Zyklus ---
+def test_run_cycle_two_coins():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0, "risk_pct": 1.0,
+                              "leverage_cap": 3.0, "max_daily_loss_pct": 10.0},
+        }
+        j = _make_journal(cfg, Path(tmp))
+
+        j.set_position("BTC/USDT", Position(entry=100.0, sl=99.0, tp1=102.0, qty=1.0,
+                       direction="long", entry_time=_ts(-5), divergence=False))
+        last = _ts(0)
+
+        per_symbol = {
+            "BTC/USDT": (_make_df([_candle(last, close=101.5, high=102.5, low=100.5)]),
+                         pd.DataFrame()),
+            "ETH/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, direction="long", entry=100.0, sl=99.0, tp1=102.0)),
+        }
+        result = run_cycle(j, cfg, _per_symbol=per_symbol)
+
+        _assert(j.get_position("BTC/USDT") is None, "13. BTC per TP geschlossen")
+        _assert(j.get_position("ETH/USDT") is not None, "13. ETH-Entry genommen")
+        _assert(result["BTC/USDT"]["exit_reason"] == "tp1", "13. BTC exit_reason=tp1")
+        _assert(result["ETH/USDT"]["entry_taken"], "13. ETH entry_taken=True")
+
+
+# --- 14. run_cycle: kein Parallel-Limit — beide Coins gleichzeitig offen ---
+def test_run_cycle_no_parallel_limit():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0, "risk_pct": 1.0,
+                              "leverage_cap": 3.0, "max_daily_loss_pct": 10.0},
+        }
+        j = _make_journal(cfg, Path(tmp))
+        last = _ts(0)
+        per_symbol = {
+            "BTC/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+            "ETH/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+        }
+        run_cycle(j, cfg, _per_symbol=per_symbol)
+        _assert(j.get_position("BTC/USDT") is not None
+                and j.get_position("ETH/USDT") is not None,
+                "14. Beide Coins gleichzeitig offen (kein Parallel-Limit)")
+
+
+# --- 15. run_cycle: geteiltes Tageslimit pausiert ALLE Entries ---
+def test_run_cycle_shared_daily_gate():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0, "risk_pct": 1.0,
+                              "leverage_cap": 3.0, "max_daily_loss_pct": 10.0},
+        }
+        j = _make_journal(cfg, Path(tmp))
+        today = pd.Timestamp.now(tz="utc").strftime("%Y-%m-%d")
+        j.state["day"] = today
+        j.state["day_start_balance"] = 1000.0
+        j.state["realized_pnl_today"] = -100.0   # -10% exakt → Gate aktiv
+        last = _ts(0)
+        per_symbol = {
+            "BTC/USDT": (_make_df([_candle(last)]), _make_setup(last)),
+            "ETH/USDT": (_make_df([_candle(last)]), _make_setup(last)),
+        }
+        run_cycle(j, cfg, _per_symbol=per_symbol)
+        _assert(j.get_position("BTC/USDT") is None
+                and j.get_position("ETH/USDT") is None,
+                "15. Geteiltes Tageslimit -10% pausiert alle Entries")
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +390,7 @@ def test_risk_gate():
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    print("Paper-Engine-Tests\n")
+    print("Paper-Engine-Tests (Multi-Coin)\n")
 
     test_check_exit_tp_long()
     test_check_exit_sl_long()
@@ -334,6 +404,9 @@ def main() -> None:
     test_tp_exit_full_flow()
     test_sl_exit_full_flow()
     test_risk_gate()
+    test_run_cycle_two_coins()
+    test_run_cycle_no_parallel_limit()
+    test_run_cycle_shared_daily_gate()
 
     print(f"\n{_pass_count + _fail_count} Tests: "
           f"{_pass_count} bestanden, {_fail_count} fehlgeschlagen.")
