@@ -19,6 +19,17 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    _TZ = _ZoneInfo("Europe/Berlin")
+except Exception:
+    _TZ = None
+
+def _now_berlin() -> datetime.datetime:
+    if _TZ:
+        return datetime.datetime.now(_TZ)
+    return datetime.datetime.now().astimezone()
+
 # Projekt-Root importierbar machen
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -75,15 +86,15 @@ def main() -> None:
     try:
         while True:
             wait = _secs_to_next_boundary()
-            next_run_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=wait)
+            next_run_dt = _now_berlin() + datetime.timedelta(seconds=wait)
             print(
-                f"\nNächster Durchlauf: {next_run_dt:%Y-%m-%d %H:%M:%S} UTC "
+                f"\nNächster Durchlauf: {next_run_dt:%Y-%m-%d %H:%M:%S} "
                 f"(in {wait:.0f}s) ...",
                 flush=True,
             )
             time.sleep(wait)
 
-            now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            now_str = _now_berlin().strftime("%Y-%m-%d %H:%M:%S")
             print(f"\n[{now_str}]", flush=True)
 
             try:

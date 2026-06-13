@@ -275,6 +275,41 @@ body {
 .c-tp1r  { color: var(--orange); font-weight: 500; }
 .c-slr   { color: var(--red);    font-weight: 500; }
 
+/* ── Content layout ── */
+.content-row {
+  display: flex; flex-direction: row;
+  gap: 20px; align-items: flex-start;
+}
+.main-col {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 20px;
+}
+.log-col {
+  width: 360px; flex-shrink: 0;
+  position: sticky; top: 20px;
+}
+
+/* ── Bot Log ── */
+.botlog { padding: 22px 22px 18px; }
+#botlog-lines {
+  margin-top: 12px;
+  height: calc(100vh - 260px);
+  min-height: 300px;
+  overflow-y: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; line-height: 1.75;
+  color: var(--text-muted);
+}
+#botlog-lines::-webkit-scrollbar { width: 4px; }
+#botlog-lines::-webkit-scrollbar-track { background: transparent; }
+#botlog-lines::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 2px; }
+.log-sep    { color: #2a2a30; user-select: none; }
+.log-warn   { color: var(--red); }
+.log-next   { color: #5a5a62; }
+.log-watch  { color: #4a5a7a; }
+.log-active { color: var(--orange); }
+.log-pos    { color: var(--green); }
+
 /* ── Footer ── */
 .footer {
   display: flex; align-items: center; justify-content: space-between;
@@ -384,71 +419,86 @@ body {
   <!-- ERROR BANNER -->
   <div class="banner" id="banner"></div>
 
-  <!-- KPI ROW -->
-  <section class="kpi-row">
-    <div class="kpi orange">
-      <div class="kpi-glow"></div>
-      <div class="kpi-title">BALANCE</div>
-      <div class="kpi-val" id="s-bal" style="color: var(--orange);">—</div>
-      <div class="kpi-sub">USDT</div>
-    </div>
+  <!-- CONTENT ROW: main left + log right -->
+  <div class="content-row">
 
-    <div class="kpi green">
-      <div class="kpi-glow"></div>
-      <div class="kpi-title">GESAMT PNL</div>
-      <div class="kpi-val" id="s-gpnl">—</div>
-      <div class="kpi-sub num" id="s-gpnl-sub">&nbsp;</div>
-    </div>
+    <!-- MAIN COLUMN -->
+    <div class="main-col">
 
-    <div class="kpi orange">
-      <div class="kpi-glow"></div>
-      <div class="kpi-title">WIN RATE</div>
-      <div class="kpi-val" id="s-wr" style="color: var(--orange);">—</div>
-      <div class="kpi-sub" id="s-wr-sub">0 Trades</div>
-    </div>
+      <!-- KPI ROW -->
+      <section class="kpi-row">
+        <div class="kpi orange">
+          <div class="kpi-glow"></div>
+          <div class="kpi-title">BALANCE</div>
+          <div class="kpi-val" id="s-bal" style="color: var(--orange);">—</div>
+          <div class="kpi-sub">USDT</div>
+        </div>
+        <div class="kpi green">
+          <div class="kpi-glow"></div>
+          <div class="kpi-title">GESAMT PNL</div>
+          <div class="kpi-val" id="s-gpnl">—</div>
+          <div class="kpi-sub num" id="s-gpnl-sub">&nbsp;</div>
+        </div>
+        <div class="kpi orange">
+          <div class="kpi-glow"></div>
+          <div class="kpi-title">WIN RATE</div>
+          <div class="kpi-val" id="s-wr" style="color: var(--orange);">—</div>
+          <div class="kpi-sub" id="s-wr-sub">0 Trades</div>
+        </div>
+        <div class="kpi green">
+          <div class="kpi-glow"></div>
+          <div class="kpi-title">HEUTE PNL</div>
+          <div class="kpi-val" id="s-heute">—</div>
+          <div class="pbar"><div class="pbar-fill" id="heute-bar"></div></div>
+        </div>
+      </section>
 
-    <div class="kpi green">
-      <div class="kpi-glow"></div>
-      <div class="kpi-title">HEUTE PNL</div>
-      <div class="kpi-val" id="s-heute">—</div>
-      <div class="pbar"><div class="pbar-fill" id="heute-bar"></div></div>
-    </div>
-  </section>
+      <!-- OPEN POSITION -->
+      <section class="panel pos">
+        <span class="pos-badge" id="pos-badge">KEINE POSITION</span>
+        <div class="panel-title">OFFENE POSITION</div>
+        <div class="pos-grid">
+          <div><div class="pos-label">Entry</div><div class="pos-val" id="pos-entry">—</div></div>
+          <div><div class="pos-label">Stop Loss</div><div class="pos-val" id="pos-sl">—</div></div>
+          <div><div class="pos-label">TP1</div><div class="pos-val" id="pos-tp1">—</div></div>
+          <div><div class="pos-label">Unrealisiert PnL</div><div class="pos-val" id="pos-upnl">—</div></div>
+        </div>
+      </section>
 
-  <!-- OPEN POSITION -->
-  <section class="panel pos">
-    <span class="pos-badge" id="pos-badge">KEINE POSITION</span>
-    <div class="panel-title">OFFENE POSITION</div>
-    <div class="pos-grid">
-      <div><div class="pos-label">Entry</div><div class="pos-val" id="pos-entry">—</div></div>
-      <div><div class="pos-label">Stop Loss</div><div class="pos-val" id="pos-sl">—</div></div>
-      <div><div class="pos-label">TP1</div><div class="pos-val" id="pos-tp1">—</div></div>
-      <div><div class="pos-label">Unrealisiert PnL</div><div class="pos-val" id="pos-upnl">—</div></div>
-    </div>
-  </section>
+      <!-- CHARTS -->
+      <section class="charts-row">
+        <div class="panel chart-panel">
+          <div class="panel-title">BALANCE-KURVE</div>
+          <div class="chart-wrap"><canvas id="chart-equity"></canvas></div>
+        </div>
+        <div class="panel chart-panel">
+          <div class="panel-title">PNL PRO TRADE</div>
+          <div class="chart-wrap"><canvas id="chart-bar"></canvas></div>
+        </div>
+      </section>
 
-  <!-- CHARTS -->
-  <section class="charts-row">
-    <div class="panel chart-panel">
-      <div class="panel-title">BALANCE-KURVE</div>
-      <div class="chart-wrap"><canvas id="chart-equity"></canvas></div>
-    </div>
-    <div class="panel chart-panel">
-      <div class="panel-title">PNL PRO TRADE</div>
-      <div class="chart-wrap"><canvas id="chart-bar"></canvas></div>
-    </div>
-  </section>
+      <!-- TRADE JOURNAL -->
+      <section class="panel journal">
+        <div class="panel-title" style="margin-bottom: 8px;">TRADE-JOURNAL</div>
+        <div class="j-grid j-head">
+          <span>EINSTIEG</span><span>RICHTUNG</span><span>ENTRY</span><span>SL</span>
+          <span>TP1</span><span>EXIT</span><span>GRUND</span>
+          <span class="r">PNL (USD)</span><span class="r">PNL %</span>
+        </div>
+        <div id="journal-rows"></div>
+      </section>
 
-  <!-- TRADE JOURNAL -->
-  <section class="panel journal">
-    <div class="panel-title" style="margin-bottom: 8px;">TRADE-JOURNAL</div>
-    <div class="j-grid j-head">
-      <span>EINSTIEG</span><span>RICHTUNG</span><span>ENTRY</span><span>SL</span>
-      <span>TP1</span><span>EXIT</span><span>GRUND</span>
-      <span class="r">PNL (USD)</span><span class="r">PNL %</span>
-    </div>
-    <div id="journal-rows"></div>
-  </section>
+    </div><!-- /main-col -->
+
+    <!-- LOG SIDEBAR -->
+    <aside class="log-col">
+      <section class="panel botlog">
+        <div class="panel-title">BOT LOG <span id="botlog-age" style="font-size:13px;font-weight:400;color:var(--text-faint);letter-spacing:.04em;margin-left:10px;"></span></div>
+        <div id="botlog-lines"></div>
+      </section>
+    </aside>
+
+  </div><!-- /content-row -->
 
   <!-- FOOTER -->
   <footer class="footer">
@@ -822,8 +872,8 @@ function renderBotStatus(wd) {
   if (wd.bot_status === 'running') {
     badge.className = 'bot-badge running';
     txt.textContent = 'Bot läuft';
-    if (wd.restart_count > 0) {
-      txt.textContent += ' (' + wd.restart_count + '× Restart)';
+    if ((wd.crash_count || 0) > 0) {
+      txt.textContent += ' (' + wd.crash_count + '× Absturz)';
     }
   } else if (wd.bot_status === 'restarting') {
     badge.className = 'bot-badge restarting';
@@ -883,7 +933,46 @@ async function loadData() {
   document.getElementById('last-upd').textContent =
     'Letzte Aktualisierung: ' +
     now.toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin' }) + ' Uhr';
+
+  loadBotLog();
 }
+
+// ── Bot Log ───────────────────────────────────────────────────────────────────
+async function loadBotLog() {
+  try {
+    const r = await fetch('../data/bot.log', { cache: 'no-store' });
+    if (!r.ok) {
+      document.getElementById('botlog-lines').innerHTML =
+        '<span style="color:#4a4a52">Noch kein Log — Watchdog starten: python scripts/watchdog.py</span>';
+      return;
+    }
+    const text = await r.text();
+    const lines = text.split(/\r?\n/).filter(l => l.length > 0);
+    const last  = lines.slice(-50);
+
+    // Alter des letzten Eintrags
+    const ageEl = document.getElementById('botlog-age');
+    const now   = new Date();
+    ageEl.textContent = now.toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin' });
+
+    document.getElementById('botlog-lines').innerHTML = last.map(line => {
+      const esc = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      if (/^=+$/.test(line.trim()))           return `<div class="log-sep">${esc}</div>`;
+      if (/!!/.test(line))                    return `<div class="log-warn">${esc}</div>`;
+      if (/\[Watchdog\]/.test(line))          return `<div class="log-watch">${esc}</div>`;
+      if (/Nächster Durchlauf|naechster/i.test(line)) return `<div class="log-next">${esc}</div>`;
+      if (/Setup\s*:\s*ja/i.test(line))       return `<div class="log-active">${esc}</div>`;
+      if (/Pos\s*:\s*(?!keine)/i.test(line))  return `<div class="log-pos">${esc}</div>`;
+      return `<div>${esc}</div>`;
+    }).join('');
+
+    const el = document.getElementById('botlog-lines');
+    el.scrollTop = 999999;
+  } catch (_) {}
+}
+
+// Bot-Log schneller refreshen (alle 8s, unabhängig vom 30s-Zyklus)
+setInterval(loadBotLog, 8000);
 
 // ── Manual Refresh ───────────────────────────────────────────────────────────
 function manualRefresh() {
