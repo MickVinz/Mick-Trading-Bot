@@ -13,7 +13,9 @@ Aufruf (aus dem Projektordner):
     python scripts/run_paper_loop.py
 """
 
+import csv
 import datetime
+import json
 import math
 import sys
 import time
@@ -39,8 +41,11 @@ import yaml
 from src.config_utils import get_symbols
 from src.paper.journal import Journal
 from src.paper.paper_engine import run_cycle
+from src.paper.stats import compute_stats
 
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+TRADES_PATH = PROJECT_ROOT / "data" / "trades.csv"
+STATS_PATH = PROJECT_ROOT / "data" / "stats.json"
 
 # Intervall in Sekunden (5m)
 _INTERVAL_S = 300
@@ -61,6 +66,19 @@ def _secs_to_next_boundary(buffer_s: int = _BUFFER_S) -> float:
     wait = next_boundary - now + buffer_s
     # Sicherheit: nie weniger als buffer_s warten
     return max(wait, buffer_s)
+
+
+def _write_stats(config: dict) -> None:
+    """Liest trades.csv, berechnet Kennzahlen, schreibt data/stats.json (fuers Dashboard)."""
+    start_balance = float(config.get("paper_trading", {}).get("start_balance", 1000.0))
+    trades = []
+    if TRADES_PATH.exists():
+        with TRADES_PATH.open(encoding="utf-8") as f:
+            trades = list(csv.DictReader(f))
+    stats = compute_stats(trades, start_balance=start_balance)
+    stats["generated_at"] = _now_berlin().strftime("%Y-%m-%d %H:%M:%S")
+    with STATS_PATH.open("w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=2)
 
 
 def main() -> None:
@@ -121,6 +139,12 @@ def main() -> None:
                 print(line, flush=True)
 
             print(f"  Balance: {journal.state['balance']:.2f} USDT", flush=True)
+
+            # Kennzahlen fuers Dashboard aktualisieren (best effort).
+            try:
+                _write_stats(config)
+            except Exception as exc:
+                print(f"  ⚠ stats.json nicht geschrieben: {exc}", flush=True)
 
     except KeyboardInterrupt:
         print("\n\nLoop beendet (Ctrl+C). State gespeichert.")
