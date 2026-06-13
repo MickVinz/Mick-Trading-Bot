@@ -132,6 +132,8 @@ def main() -> None:
                 if r["entry_taken"]:
                     p = journal.get_position(symbol)
                     line += f"ENTRY {p.direction.upper()} @{p.entry:.4f} | "
+                if r.get("book_cap_hit"):
+                    line += "Setup (Buch-Cap, kein Entry) | "
                 pos = journal.get_position(symbol)
                 pos_str = (f"{pos.direction.upper()}@{pos.entry:.4f}"
                            if pos else "flach")

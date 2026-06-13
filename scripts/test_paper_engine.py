@@ -38,7 +38,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.paper.journal import Journal
 from src.paper.paper_engine import (
-    _decide_symbol, _gate_open, check_exit, exit_costs, run_cycle, size_qty,
+    _book_notional, _decide_symbol, _gate_open, check_exit, exit_costs,
+    run_cycle, size_qty,
 )
 from src.paper.position import Position
 
@@ -461,6 +462,72 @@ def test_sl_exit_with_fees():
                 "18. Fee-SL: Netto -11.393 (> brutto -10 wegen Gebuehren)")
 
 
+# --- 19. _book_notional: Summe qty × entry ueber alle offenen Positionen ---
+def test_book_notional():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0},
+        }
+        j = _make_journal(cfg, Path(tmp))
+        _assert(_book_notional(j) == 0.0, "19. _book_notional leer = 0")
+        j.set_position("BTC/USDT", Position(entry=100.0, sl=99.0, tp1=102.0, qty=2.0,
+                       direction="long", entry_time=_ts(), divergence=False))
+        j.set_position("ETH/USDT", Position(entry=50.0, sl=49.0, tp1=52.0, qty=3.0,
+                       direction="long", entry_time=_ts(), divergence=False))
+        # 2*100 + 3*50 = 350
+        _assert(_book_notional(j) == 350.0, "19. _book_notional = 350 (200+150)")
+
+
+# --- 20. Buch-Notional-Cap blockiert weiteren Entry ---
+def test_book_notional_cap_blocks():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0, "risk_pct": 1.0,
+                              "leverage_cap": 3.0, "max_daily_loss_pct": 10.0,
+                              "max_book_notional_x": 1.5},  # Cap = 1500 USDT Notional
+        }
+        j = _make_journal(cfg, Path(tmp))
+        last = _ts(0)
+        # Jeder Entry: entry 100, sl 99 -> qty 10 -> Notional 1000.
+        # BTC: 1000 <= 1500 -> oeffnet. ETH: 1000+1000=2000 > 1500 -> blockiert.
+        per_symbol = {
+            "BTC/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+            "ETH/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+        }
+        run_cycle(j, cfg, _per_symbol=per_symbol)
+        _assert(j.get_position("BTC/USDT") is not None,
+                "20. BTC geoeffnet (unter Cap)")
+        _assert(j.get_position("ETH/USDT") is None,
+                "20. ETH blockiert (Buch-Notional-Cap erreicht)")
+
+
+# --- 21. Ohne Cap-Config: beide oeffnen (Abwaertskompat) ---
+def test_book_notional_cap_disabled():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0, "risk_pct": 1.0,
+                              "leverage_cap": 3.0, "max_daily_loss_pct": 10.0},
+            # kein max_book_notional_x -> Cap aus
+        }
+        j = _make_journal(cfg, Path(tmp))
+        last = _ts(0)
+        per_symbol = {
+            "BTC/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+            "ETH/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+        }
+        run_cycle(j, cfg, _per_symbol=per_symbol)
+        _assert(j.get_position("BTC/USDT") is not None
+                and j.get_position("ETH/USDT") is not None,
+                "21. Ohne Cap: beide oeffnen (Abwaertskompat)")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -486,6 +553,9 @@ def main() -> None:
     test_exit_costs_unit()
     test_tp_exit_with_fees()
     test_sl_exit_with_fees()
+    test_book_notional()
+    test_book_notional_cap_blocks()
+    test_book_notional_cap_disabled()
 
     print(f"\n{_pass_count + _fail_count} Tests: "
           f"{_pass_count} bestanden, {_fail_count} fehlgeschlagen.")

@@ -148,6 +148,15 @@ def _gate_open(state: dict, config: dict) -> bool:
     return daily_loss_pct > -max_loss_pct
 
 
+def _book_notional(journal: Journal) -> float:
+    """Summe des Notionals (qty × entry) ALLER offenen Positionen (geteiltes Buch)."""
+    total = 0.0
+    for pos in journal.state.get("positions", {}).values():
+        if pos is not None:
+            total += pos.qty * pos.entry
+    return total
+
+
 def _is_new_candle(journal: Journal, symbol: str, last_ts: pd.Timestamp) -> bool:
     """Dedup pro Symbol: True, wenn last_ts neuer ist als die zuletzt verarbeitete Kerze."""
     last_processed = journal.get_last_candle_time(symbol)
@@ -221,11 +230,16 @@ def _enter_symbol(
     PHASE-2-Baustein: eröffnet ggf. eine Position für ein flaches Symbol.
     Nur wenn gate_open (geteiltes Tageslimit), Symbol flach und gültiges Setup
     auf der letzten Kerze. Sizing gegen die aktuelle geteilte Balance.
-    KEIN Parallel-Limit, KEIN Dedup (das macht der Aufrufer).
+
+    Buch-Notional-Cap: das Gesamt-Notional ALLER offenen Positionen darf
+    balance × max_book_notional_x nicht überschreiten (begrenzt das aggregierte
+    Korrelations-Risiko über die 6 Coins). max_book_notional_x = 0 → Cap aus.
+    KEIN Parallel-Count-Limit, KEIN Dedup (das macht der Aufrufer).
     """
     state = journal.state
+    pt_cfg = config.get("paper_trading", {})
     last_ts = df.iloc[-1]["timestamp"]
-    result = {"entry_taken": False, "setup_found": False}
+    result = {"entry_taken": False, "setup_found": False, "book_cap_hit": False}
 
     if not gate_open or journal.get_position(symbol) is not None or setups.empty:
         return result
@@ -246,14 +260,24 @@ def _enter_symbol(
     result["setup_found"] = True
     s = valid.iloc[-1]
     entry, sl, tp1 = float(s["entry"]), float(s["sl"]), float(s["tp1"])
-    qty = size_qty(state["balance"], entry, sl, config.get("paper_trading", {}))
-    if qty > 0:
-        journal.set_position(symbol, Position(
-            entry=entry, sl=sl, tp1=tp1, qty=qty,
-            direction=s["direction"], entry_time=last_ts,
-            divergence=bool(s.get("divergence_active", False)),
-        ))
-        result["entry_taken"] = True
+    qty = size_qty(state["balance"], entry, sl, pt_cfg)
+    if qty <= 0:
+        return result
+
+    # Buch-Notional-Cap: aggregiertes Exposure über alle offenen Positionen.
+    max_book_x = float(pt_cfg.get("max_book_notional_x", 0.0))
+    if max_book_x > 0:
+        new_notional = qty * entry
+        if _book_notional(journal) + new_notional > state["balance"] * max_book_x:
+            result["book_cap_hit"] = True
+            return result
+
+    journal.set_position(symbol, Position(
+        entry=entry, sl=sl, tp1=tp1, qty=qty,
+        direction=s["direction"], entry_time=last_ts,
+        divergence=bool(s.get("divergence_active", False)),
+    ))
+    result["entry_taken"] = True
     return result
 
 
@@ -356,6 +380,7 @@ def run_cycle(journal: Journal, config: dict, _per_symbol=None) -> dict:
         entry_res = _enter_symbol(symbol, df, setups, journal, config, gate)
         results[symbol]["entry_taken"] = entry_res["entry_taken"]
         results[symbol]["setup_found"] = entry_res["setup_found"]
+        results[symbol]["book_cap_hit"] = entry_res.get("book_cap_hit", False)
         journal.set_last_candle_time(symbol, df.iloc[-1]["timestamp"].isoformat())
 
     journal.save_state()
