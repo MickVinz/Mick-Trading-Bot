@@ -8,9 +8,9 @@
 
 ## Dashboard
 
-![Dashboard Mockup](docs/preview.svg)
+![Dashboard](docs/dashboard-preview.png)
 
-> *Mockup mit Demo-Daten — keine echten Kontodaten. Echtes Dashboard zeigt Live-Daten aus `data/state.json` + `data/trades.csv`.*
+> *Live-Dashboard mit echten Paper-Trading-Daten. Zeigt Live-Daten aus `data/state.json` + `data/trades.csv`.*
 
 Das Live-Dashboard läuft lokal im Browser und aktualisiert sich automatisch alle 30 Sekunden:
 
@@ -28,7 +28,9 @@ Dann im Browser öffnen: **`http://localhost:8080/scripts/dashboard.html`**
 | Offene Position | Entry · SL · TP1 live |
 | Trade-Journal | alle Trades aus `data/trades.csv` |
 | Auto-Refresh | alle 30 s, Countdown sichtbar |
-| Design | Apple Dark Mode (`#000` / `#1c1c1e`) |
+| Bot Log | Live-Sidebar, aktualisiert alle 8 s |
+| Watchdog | Auto-Neustart bei Absturz, Badge im Header |
+| Design | Space Grotesk, Dark Mode, Glow-Cards |
 
 👉 **Projektübersicht (visuell):** [`docs/vision.html`](docs/vision.html) im Browser öffnen.
 
