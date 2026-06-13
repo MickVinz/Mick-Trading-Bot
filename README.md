@@ -8,7 +8,9 @@
 
 ## Dashboard
 
-![Dashboard Preview](docs/dashboard-preview.png)
+![Dashboard Mockup](docs/preview.svg)
+
+> *Mockup mit Demo-Daten — keine echten Kontodaten. Echtes Dashboard zeigt Live-Daten aus `data/state.json` + `data/trades.csv`.*
 
 Das Live-Dashboard läuft lokal im Browser und aktualisiert sich automatisch alle 30 Sekunden:
 
