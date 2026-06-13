@@ -1,21 +1,26 @@
 """
-Paper-Trading-Engine: ein Pipeline-Durchlauf pro Aufruf.
+Paper-Trading-Engine (Multi-Coin): ein Zyklus pro Aufruf.
 
-Ablauf je Aufruf (run_once):
-    1. BingX-Kerzen laden → WaveTrend → MFI → detect_setups → calculate_trade_levels
-    2. EXIT ZUERST: offene Position gegen letzte geschlossene Kerze prüfen.
+Ablauf je Zyklus (run_cycle), gegen EINE geteilte Balance:
+    0. Tages-Rollover (UTC-Mitternacht) — geteilt über alle Coins.
+    1. Pro Coin: BingX-Kerzen → WaveTrend → MFI → detect_setups → trade_levels.
+    2. PHASE 1 — EXITS zuerst (über alle Coins): offene Position gegen letzte
+       geschlossene Kerze prüfen, realisierten PnL auf die geteilte Balance buchen.
        Long:  low  ≤ SL → Exit @SL  |  high ≥ TP1 → Exit @TP1
        Short: high ≥ SL → Exit @SL  |  low  ≤ TP1 → Exit @TP1
        Beides in einer Kerze → SL zuerst (konservativ).
-    3. ENTRY DANACH (nur wenn flach, max 1 Position):
+    3. RISK-GATE (geteilt): realized_pnl_today ≤ -max_daily_loss_pct% → keine
+       neuen Entries bis nächster UTC-Tag.
+    4. PHASE 2 — ENTRIES danach (über alle flachen Coins, KEIN Parallel-Limit):
        Setup.time == letzte Kerze UND setup_valid UND gültige Levels.
-       Sizing: risk_usd = balance × risk_pct/100 | qty = risk_usd / |entry-sl|
-       Notional-Cap: qty × entry ≤ balance × leverage_cap
-    4. RISK-GATE: realized_pnl_today ≤ -max_daily_loss_pct% → kein Entry
-       bis nächster UTC-Tag.
+       Sizing: risk_usd = balance × risk_pct/100 | qty = risk_usd / |entry-sl|,
+       gegen die nach Phase 1 aktualisierte geteilte Balance.
+
+Zwei Phasen (erst alle Exits, dann alle Entries), damit das Entry-Sizing
+reihenfolge-unabhängig gegen dieselbe, korrekt aktualisierte Balance läuft.
 
 Keine Orders, kein fetch_bingx_balance — ausschließlich lesende Endpunkte.
-_df / _setups sind reine Test-Hooks (beide None im Live-Betrieb).
+_per_symbol ist ein reiner Test-Hook (None im Live-Betrieb).
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from typing import Optional, Tuple
 
 import pandas as pd
 
+from src.config_utils import get_symbols, resolve_config
 from src.exchange.bingx_client import fetch_bingx_klines
 from src.indicators.mfi import calculate_mfi
 from src.indicators.wavetrend import calculate_wavetrend, detect_dots
@@ -55,7 +61,6 @@ def check_exit(
         sl_hit = candle["high"] >= position.sl
         tp_hit = candle["low"] <= position.tp1
 
-    # SL hat Vorrang (wird zuerst geprüft)
     if sl_hit:
         return "sl", position.sl
     if tp_hit:
@@ -65,7 +70,7 @@ def check_exit(
 
 def size_qty(balance: float, entry: float, sl: float, pt_cfg: dict) -> float:
     """
-    Berechnet die Positionsgröße in BTC.
+    Berechnet die Positionsgröße in Coin-Einheiten.
 
     risk_usd  = balance × risk_pct / 100
     qty       = risk_usd / |entry − sl|
@@ -85,183 +90,232 @@ def size_qty(balance: float, entry: float, sl: float, pt_cfg: dict) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Kernentscheidung (testbar ohne BingX-Verbindung)
+# Geteilte Konto-Logik
 # ---------------------------------------------------------------------------
 
-def _make_decision(
-    df: pd.DataFrame,
-    setups: pd.DataFrame,
-    journal: Journal,
-    config: dict,
-) -> dict:
-    """
-    Führt Exit-Prüfung und Entry-Entscheidung auf Basis bereits berechneter
-    Daten durch. Mutiert journal.state und ruft journal.save_state() auf.
-
-    df      : Kerzen-DataFrame mit allen Indikator-Spalten, chronologisch
-              aufsteigend, nur geschlossene Kerzen.
-    setups  : Ausgabe von calculate_trade_levels (kann leer sein).
-
-    Rückgabe: dict mit exit_reason, exit_price, entry_taken, balance,
-              setup_found.
-    """
-    state = journal.state
-    last_candle = df.iloc[-1]
-    last_ts = last_candle["timestamp"]
+def _rollover_if_new_day(state: dict) -> None:
+    """Setzt die geteilten Tageswerte zurück, wenn ein neuer UTC-Tag begann."""
     today_utc = pd.Timestamp.now(tz="utc").strftime("%Y-%m-%d")
-
-    result = {
-        "exit_reason": None,
-        "exit_price": None,
-        "entry_taken": False,
-        "setup_found": False,
-        "balance": state["balance"],
-    }
-
-    # --- Tages-Rollover (UTC-Mitternacht) --------------------------------
     if state.get("day", "") != today_utc:
         state["day"] = today_utc
         state["day_start_balance"] = state["balance"]
         state["realized_pnl_today"] = 0.0
 
-    # --- Dedup: Kerze schon verarbeitet? ----------------------------------
-    last_processed = state.get("last_candle_time")
-    if last_processed is not None:
-        last_processed_ts = pd.Timestamp(last_processed)
-        # Sicherstellen dass beide tz-aware oder beide tz-naive
-        if last_processed_ts.tzinfo is None and last_ts.tzinfo is not None:
-            last_processed_ts = last_processed_ts.tz_localize("utc")
-        elif last_processed_ts.tzinfo is not None and last_ts.tzinfo is None:
-            last_ts = last_ts.tz_localize("utc")
-        if last_processed_ts >= last_ts:
-            # Keine neue geschlossene Kerze seit letztem Durchlauf
-            return result
 
-    # --- 1. EXIT ZUERST ---------------------------------------------------
-    position: Optional[Position] = state.get("open_position")
-    if position is not None:
-        reason, exit_price = check_exit(position, last_candle)
-        if reason is not None:
-            pnl_usd = position.pnl(exit_price)
-            new_balance = state["balance"] + pnl_usd
-            state["balance"] = new_balance
-            state["realized_pnl_today"] = (
-                state.get("realized_pnl_today", 0.0) + pnl_usd
-            )
-            state["open_position"] = None
+def _gate_open(state: dict, config: dict) -> bool:
+    """True, wenn das geteilte Tagesverlust-Limit NEUE Entries noch zulässt."""
+    pt_cfg = config.get("paper_trading", {})
+    max_loss_pct = float(pt_cfg.get("max_daily_loss_pct", 10.0))
+    day_start = state.get("day_start_balance", state["balance"])
+    pnl_today = state.get("realized_pnl_today", 0.0)
+    daily_loss_pct = (pnl_today / day_start * 100) if day_start > 0 else 0.0
+    return daily_loss_pct > -max_loss_pct
 
-            journal.record_trade(
-                position=position,
-                exit_time=last_ts,
-                exit_price=exit_price,
-                exit_reason=reason,
-                balance_after=new_balance,
-            )
-            result["exit_reason"] = reason
-            result["exit_price"] = exit_price
-            result["balance"] = new_balance
 
-    # --- 2. ENTRY (nur wenn flach) ----------------------------------------
-    if state.get("open_position") is None and not setups.empty:
-        pt_cfg = config.get("paper_trading", {})
-        max_loss_pct = float(pt_cfg.get("max_daily_loss_pct", 3.0))
+def _is_new_candle(journal: Journal, symbol: str, last_ts: pd.Timestamp) -> bool:
+    """Dedup pro Symbol: True, wenn last_ts neuer ist als die zuletzt verarbeitete Kerze."""
+    last_processed = journal.get_last_candle_time(symbol)
+    if last_processed is None:
+        return True
+    lp = pd.Timestamp(last_processed)
+    lt = last_ts
+    if lp.tzinfo is None and lt.tzinfo is not None:
+        lp = lp.tz_localize("utc")
+    elif lp.tzinfo is not None and lt.tzinfo is None:
+        lt = lt.tz_localize("utc")
+    return not (lp >= lt)
 
-        day_start = state.get("day_start_balance", state["balance"])
-        pnl_today = state.get("realized_pnl_today", 0.0)
-        daily_loss_pct = (pnl_today / day_start * 100) if day_start > 0 else 0.0
 
-        if daily_loss_pct <= -max_loss_pct:
-            # Risk-Gate aktiv — kein neuer Entry bis nächster UTC-Tag
-            pass
-        else:
-            # Gültige Setups auf der aktuellen (letzten geschlossenen) Kerze
-            mask = (
-                (setups["setup_valid"] == True)     # noqa: E712
-                & (setups["time"] == last_ts)
-                & (setups["tp1"].notna())
-            )
-            if "sl_zu_eng" in setups.columns:
-                mask &= setups["sl_zu_eng"] == False   # noqa: E712
-            if "warmup_artefact" in setups.columns:
-                mask &= setups["warmup_artefact"] == False  # noqa: E712
+# ---------------------------------------------------------------------------
+# Per-Symbol-Entscheidungen (testbar ohne BingX-Verbindung)
+# ---------------------------------------------------------------------------
 
-            valid = setups[mask]
+def _exit_symbol(symbol: str, df: pd.DataFrame, journal: Journal) -> dict:
+    """
+    PHASE-1-Baustein: prüft die offene Position eines Symbols gegen die letzte
+    Kerze. Bucht ggf. realisierten PnL auf die geteilte Balance, schließt die
+    Position und schreibt den Trade. KEIN Dedup (das macht der Aufrufer).
+    """
+    state = journal.state
+    last_candle = df.iloc[-1]
+    last_ts = last_candle["timestamp"]
+    result = {
+        "symbol": symbol,
+        "exit_reason": None,
+        "exit_price": None,
+        "entry_taken": False,
+        "setup_found": False,
+    }
 
-            if not valid.empty:
-                result["setup_found"] = True
-                s = valid.iloc[-1]  # bei mehreren: jüngstes nehmen
+    position = journal.get_position(symbol)
+    if position is None:
+        return result
 
-                entry = float(s["entry"])
-                sl = float(s["sl"])
-                tp1 = float(s["tp1"])
+    reason, exit_price = check_exit(position, last_candle)
+    if reason is None:
+        return result
 
-                qty = size_qty(state["balance"], entry, sl, pt_cfg)
-                if qty > 0:
-                    new_pos = Position(
-                        entry=entry,
-                        sl=sl,
-                        tp1=tp1,
-                        qty=qty,
-                        direction=s["direction"],
-                        entry_time=last_ts,
-                        divergence=bool(s.get("divergence_active", False)),
-                    )
-                    state["open_position"] = new_pos
-                    result["entry_taken"] = True
+    pnl_usd = position.pnl(exit_price)
+    state["balance"] += pnl_usd
+    state["realized_pnl_today"] = state.get("realized_pnl_today", 0.0) + pnl_usd
+    journal.set_position(symbol, None)
+    journal.record_trade(
+        symbol=symbol, position=position, exit_time=last_ts,
+        exit_price=exit_price, exit_reason=reason,
+        balance_after=state["balance"],
+    )
+    result["exit_reason"] = reason
+    result["exit_price"] = exit_price
+    return result
 
-    state["last_candle_time"] = last_ts.isoformat()
-    result["balance"] = state["balance"]
-    journal.save_state()
+
+def _enter_symbol(
+    symbol: str,
+    df: pd.DataFrame,
+    setups: pd.DataFrame,
+    journal: Journal,
+    config: dict,
+    gate_open: bool,
+) -> dict:
+    """
+    PHASE-2-Baustein: eröffnet ggf. eine Position für ein flaches Symbol.
+    Nur wenn gate_open (geteiltes Tageslimit), Symbol flach und gültiges Setup
+    auf der letzten Kerze. Sizing gegen die aktuelle geteilte Balance.
+    KEIN Parallel-Limit, KEIN Dedup (das macht der Aufrufer).
+    """
+    state = journal.state
+    last_ts = df.iloc[-1]["timestamp"]
+    result = {"entry_taken": False, "setup_found": False}
+
+    if not gate_open or journal.get_position(symbol) is not None or setups.empty:
+        return result
+
+    mask = (
+        (setups["setup_valid"] == True)            # noqa: E712
+        & (setups["time"] == last_ts)
+        & (setups["tp1"].notna())
+    )
+    if "sl_zu_eng" in setups.columns:
+        mask &= setups["sl_zu_eng"] == False        # noqa: E712
+    if "warmup_artefact" in setups.columns:
+        mask &= setups["warmup_artefact"] == False   # noqa: E712
+    valid = setups[mask]
+    if valid.empty:
+        return result
+
+    result["setup_found"] = True
+    s = valid.iloc[-1]
+    entry, sl, tp1 = float(s["entry"]), float(s["sl"]), float(s["tp1"])
+    qty = size_qty(state["balance"], entry, sl, config.get("paper_trading", {}))
+    if qty > 0:
+        journal.set_position(symbol, Position(
+            entry=entry, sl=sl, tp1=tp1, qty=qty,
+            direction=s["direction"], entry_time=last_ts,
+            divergence=bool(s.get("divergence_active", False)),
+        ))
+        result["entry_taken"] = True
+    return result
+
+
+def _decide_symbol(
+    symbol: str,
+    df: pd.DataFrame,
+    setups: pd.DataFrame,
+    journal: Journal,
+    config: dict,
+    gate_open: bool,
+) -> dict:
+    """
+    Vollständige Einzel-Symbol-Entscheidung (Exit + Entry + Dedup) für direkte
+    Tests / Einzelaufrufe. run_cycle verwendet stattdessen _exit_symbol /
+    _enter_symbol getrennt, um die zwei Phasen über alle Coins zu ordnen.
+    """
+    last_ts = df.iloc[-1]["timestamp"]
+    result = {
+        "symbol": symbol,
+        "exit_reason": None,
+        "exit_price": None,
+        "entry_taken": False,
+        "setup_found": False,
+    }
+    if not _is_new_candle(journal, symbol, last_ts):
+        return result
+
+    result.update(_exit_symbol(symbol, df, journal))
+    result.update(_enter_symbol(symbol, df, setups, journal, config, gate_open))
+    journal.set_last_candle_time(symbol, last_ts.isoformat())
     return result
 
 
 # ---------------------------------------------------------------------------
-# Vollständige Pipeline (Live-Betrieb)
+# Vollständige Multi-Coin-Pipeline (Live-Betrieb)
 # ---------------------------------------------------------------------------
 
-def run_once(
-    journal: Journal,
-    config: dict,
-    _df: Optional[pd.DataFrame] = None,
-    _setups: Optional[pd.DataFrame] = None,
-) -> dict:
+def _load_symbol_data(symbol: str, config: dict):
+    """Lädt BingX-Kerzen für EIN Symbol und berechnet alle Indikatoren + Setups."""
+    sym_cfg = resolve_config(config, symbol)
+    bingx_symbol = symbol.replace("/", "-")
+    interval = sym_cfg["market"]["timeframe"]
+
+    df = fetch_bingx_klines(bingx_symbol, interval, limit=500)
+    wt_cfg = sym_cfg["wavetrend"]
+    df = calculate_wavetrend(df, n1=wt_cfg["n1"], n2=wt_cfg["n2"],
+                             wt2_sma_length=wt_cfg["wt2_sma_length"])
+    df = detect_dots(df)
+    df = calculate_mfi(df, period=sym_cfg["mfi"]["period"])
+    setups = detect_setups(df, sym_cfg)
+    setups = calculate_trade_levels(df, setups, sym_cfg)
+    return df, setups
+
+
+def run_cycle(journal: Journal, config: dict, _per_symbol=None) -> dict:
     """
-    Ein vollständiger Durchlauf der Paper-Trading-Pipeline.
+    Ein vollständiger Multi-Coin-Zyklus gegen die geteilte Balance.
 
-    Im Normalfall (Live): lädt BingX-Kerzen, berechnet Indikatoren,
-    erkennt Setups, berechnet Levels, ruft _make_decision auf.
+    Phase 0: Tages-Rollover (geteilt).
+    Phase 1: alle EXITS buchen (Balance aktualisieren).
+    Phase 2: geteiltes Tageslimit-Gate, dann ENTRIES je flachem Coin.
 
-    _df / _setups (Test-Hooks): wenn übergeben, überspringt der Aufruf
-    den jeweiligen Schritt — nützlich für Tests ohne Netzwerkzugriff.
-    Hinweis: Wenn _df übergeben wird, muss es bereits alle Indikator-
-    Spalten (wt1, wt2, green_dot, red_dot, dot, mfi) enthalten, damit
-    _setups korrekt berechnet werden kann, falls _setups=None.
+    Dedup pro Symbol einmal pro Zyklus (last_candle_time): nur Coins mit einer
+    NEUEN geschlossenen Kerze werden verarbeitet.
+
+    _per_symbol (Test-Hook): {symbol: (df, setups)} überspringt das Laden.
+    Rückgabe: {symbol: result-dict}.
     """
-    market = config["market"]
-    symbol = market["symbol"].replace("/", "-")   # "BTC/USDT" → "BTC-USDT"
-    interval = market["timeframe"]
+    _rollover_if_new_day(journal.state)
+    symbols = get_symbols(config)
 
-    # -- Daten & Indikatoren -----------------------------------------------
-    if _df is not None:
-        df = _df
+    # Daten beschaffen (Test-Hook oder live laden; pro Coin fehlertolerant).
+    data = {}
+    if _per_symbol is not None:
+        data = _per_symbol
     else:
-        df = fetch_bingx_klines(symbol, interval, limit=500)
+        for symbol in symbols:
+            try:
+                data[symbol] = _load_symbol_data(symbol, config)
+            except Exception as exc:
+                print(f"  ⚠ {symbol}: Daten-Fehler uebersprungen: {exc}", flush=True)
 
-        wt_cfg = config["wavetrend"]
-        df = calculate_wavetrend(
-            df,
-            n1=wt_cfg["n1"],
-            n2=wt_cfg["n2"],
-            wt2_sma_length=wt_cfg["wt2_sma_length"],
-        )
-        df = detect_dots(df)
-        df = calculate_mfi(df, period=config["mfi"]["period"])
+    # Dedup: nur Coins mit neuer geschlossener Kerze diesen Zyklus verarbeiten.
+    fresh = {}
+    for symbol, (df, setups) in data.items():
+        if df is None or df.empty:
+            continue
+        if _is_new_candle(journal, symbol, df.iloc[-1]["timestamp"]):
+            fresh[symbol] = (df, setups)
 
-    # -- Setup-Erkennung & Trade-Levels ------------------------------------
-    if _setups is not None:
-        setups = _setups
-    else:
-        setups = detect_setups(df, config)
-        setups = calculate_trade_levels(df, setups, config)
+    # PHASE 1 — EXITS zuerst (Balance wird aktualisiert).
+    results = {}
+    for symbol, (df, _setups) in fresh.items():
+        results[symbol] = _exit_symbol(symbol, df, journal)
 
-    return _make_decision(df, setups, journal, config)
+    # PHASE 2 — ENTRIES gegen aktualisierte Balance, geteiltes Gate.
+    gate = _gate_open(journal.state, config)
+    for symbol, (df, setups) in fresh.items():
+        entry_res = _enter_symbol(symbol, df, setups, journal, config, gate)
+        results[symbol]["entry_taken"] = entry_res["entry_taken"]
+        results[symbol]["setup_found"] = entry_res["setup_found"]
+        journal.set_last_candle_time(symbol, df.iloc[-1]["timestamp"].isoformat())
+
+    journal.save_state()
+    return results
