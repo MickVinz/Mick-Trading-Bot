@@ -36,8 +36,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import yaml
 
+from src.config_utils import get_symbols
 from src.paper.journal import Journal
-from src.paper.paper_engine import run_once
+from src.paper.paper_engine import run_cycle
 
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
@@ -67,19 +68,17 @@ def main() -> None:
         config = yaml.safe_load(f)
 
     journal = Journal(config)
+    symbols = get_symbols(config)
     balance = journal.state["balance"]
-    pos = journal.state.get("open_position")
 
     print("=" * 60)
-    print("  Mick Trading Bot — Paper-Trading-Loop")
+    print("  Mick Trading Bot — Paper-Trading-Loop (Multi-Coin)")
     print("  KEINE ECHTEN ORDERS. Reine Simulation.")
     print("=" * 60)
-    print(f"  Balance:          {balance:.2f} USDT")
-    if pos:
-        print(f"  Offene Position:  {pos.direction.upper()} "
-              f"@{pos.entry:.2f} | SL {pos.sl:.2f} | TP1 {pos.tp1:.2f}")
-    else:
-        print("  Offene Position:  keine")
+    print(f"  Balance (geteilt): {balance:.2f} USDT")
+    print(f"  Coins:             {', '.join(symbols)}")
+    open_now = [s for s in symbols if journal.get_position(s) is not None]
+    print(f"  Offene Positionen: {len(open_now)} ({', '.join(open_now) or 'keine'})")
     print("  Beenden: Ctrl+C")
     print("=" * 60)
 
@@ -98,48 +97,39 @@ def main() -> None:
             print(f"\n[{now_str}]", flush=True)
 
             try:
-                result = run_once(journal, config)
+                results = run_cycle(journal, config)
             except Exception as exc:
-                print(f"  ❌ Fehler im Durchlauf: {exc}", flush=True)
+                print(f"  ❌ Fehler im Zyklus: {exc}", flush=True)
                 continue
 
-            # --- Ausgabe ---
-            if result["exit_reason"]:
-                print(
-                    f"  EXIT  : {result['exit_reason'].upper()} "
-                    f"@{result['exit_price']:.2f}",
-                    flush=True,
-                )
+            # --- Ausgabe: eine Zeile pro Coin ---
+            for symbol in get_symbols(config):
+                r = results.get(symbol)
+                if r is None:
+                    print(f"  {symbol}: (uebersprungen)", flush=True)
+                    continue
+                line = f"  {symbol}: "
+                if r["exit_reason"]:
+                    line += f"EXIT {r['exit_reason'].upper()} @{r['exit_price']:.4f} | "
+                if r["entry_taken"]:
+                    p = journal.get_position(symbol)
+                    line += f"ENTRY {p.direction.upper()} @{p.entry:.4f} | "
+                pos = journal.get_position(symbol)
+                pos_str = (f"{pos.direction.upper()}@{pos.entry:.4f}"
+                           if pos else "flach")
+                line += f"Pos: {pos_str}"
+                print(line, flush=True)
 
-            print(
-                f"  Setup : {'JA ✓' if result['setup_found'] else 'nein'}",
-                flush=True,
-            )
-
-            if result["entry_taken"]:
-                p = journal.state["open_position"]
-                print(
-                    f"  ENTRY : {p.direction.upper()} @{p.entry:.2f} "
-                    f"| SL {p.sl:.2f} | TP1 {p.tp1:.2f} | qty {p.qty:.6f}",
-                    flush=True,
-                )
-
-            pos = journal.state.get("open_position")
-            pos_str = (
-                f"{pos.direction.upper()} @{pos.entry:.2f}"
-                if pos else "keine"
-            )
-            print(f"  Pos   : {pos_str}", flush=True)
-            print(f"  Bal   : {result['balance']:.2f} USDT", flush=True)
+            print(f"  Balance: {journal.state['balance']:.2f} USDT", flush=True)
 
     except KeyboardInterrupt:
         print("\n\nLoop beendet (Ctrl+C). State gespeichert.")
-        pos = journal.state.get("open_position")
-        if pos:
+        open_now = [s for s in get_symbols(config)
+                    if journal.get_position(s) is not None]
+        if open_now:
             print(
-                f"ACHTUNG: Offene Position {pos.direction.upper()} "
-                f"@{pos.entry:.2f} läuft noch. "
-                "state.json enthält sie — wird beim nächsten Start fortgeführt."
+                f"ACHTUNG: {len(open_now)} offene Position(en) ({', '.join(open_now)}) "
+                "laufen noch. state.json enthält sie — wird beim nächsten Start fortgeführt."
             )
 
 
