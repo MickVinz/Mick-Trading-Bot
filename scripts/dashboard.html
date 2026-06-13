@@ -127,6 +127,30 @@ body {
 }
 .robot-eyes rect { animation: eye-blink 4s ease-in-out infinite; transform-origin: center; }
 
+/* Bot stopped — robot friert ein */
+.bot-dead .robot-mover { animation-play-state: paused; }
+.bot-dead .robot-svg   { animation-play-state: paused; filter: drop-shadow(0 0 6px rgba(236,106,100,.4)) grayscale(0.6); }
+.bot-dead .robot-eyes rect { animation-play-state: paused; }
+
+/* ── Bot-Status Badge ── */
+.bot-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 12px; border-radius: 99px;
+  font-size: 13px; font-weight: 600; letter-spacing: .06em;
+  white-space: nowrap; transition: all .4s ease;
+}
+.bot-badge.running    { background: rgba(54,209,127,.1);  border: 1px solid rgba(54,209,127,.35); color: #3ad985; }
+.bot-badge.restarting { background: rgba(233,169,81,.1);  border: 1px solid rgba(233,169,81,.35); color: #e9a951; }
+.bot-badge.dead       { background: rgba(229,68,62,.12);  border: 1px solid rgba(229,68,62,.45);  color: #f0726c; }
+.bot-badge.unknown    { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); color: #6f6f78; }
+.bot-badge-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.bot-badge.running    .bot-badge-dot { background: #3ad985; box-shadow: 0 0 6px rgba(54,209,127,.7); animation: mtb-pulse 2s infinite; }
+.bot-badge.restarting .bot-badge-dot { background: #e9a951; box-shadow: 0 0 6px rgba(233,169,81,.6); animation: mtb-pulse 0.8s infinite; }
+.bot-badge.dead       .bot-badge-dot { background: #ec6a64; box-shadow: 0 0 6px rgba(236,106,100,.5); }
+.bot-badge.unknown    .bot-badge-dot { background: #6f6f78; }
+
 /* ── Status + Clock ── */
 .status-grp { display: flex; align-items: center; gap: 10px; }
 .status-dot {
@@ -345,6 +369,10 @@ body {
         </div>
       </div>
 
+      <span class="bot-badge unknown" id="bot-badge">
+        <span class="bot-badge-dot"></span>
+        <span id="bot-badge-txt">Bot …</span>
+      </span>
       <div class="status-grp">
         <span class="status-dot"></span>
         <span class="status-lbl">Simulation aktiv</span>
@@ -765,6 +793,51 @@ function renderTable(trades) {
   }).join('');
 }
 
+// ── Bot Status (Watchdog) ─────────────────────────────────────────────────────
+function renderBotStatus(wd) {
+  const badge  = document.getElementById('bot-badge');
+  const txt    = document.getElementById('bot-badge-txt');
+  const header = document.querySelector('.header');
+
+  if (!wd) {
+    badge.className = 'bot-badge unknown';
+    txt.textContent = 'Watchdog nicht aktiv';
+    header.classList.remove('bot-dead');
+    return;
+  }
+
+  // Watchdog selbst tot wenn Heartbeat > 2 Min alt
+  const aliveMs = Date.now() - new Date(wd.watchdog_alive).getTime();
+  const watchdogDead = aliveMs > 2 * 60 * 1000;
+
+  if (watchdogDead) {
+    badge.className = 'bot-badge dead';
+    txt.textContent = 'Bot gestoppt!';
+    header.classList.add('bot-dead');
+    return;
+  }
+
+  header.classList.remove('bot-dead');
+
+  if (wd.bot_status === 'running') {
+    badge.className = 'bot-badge running';
+    txt.textContent = 'Bot läuft';
+    if (wd.restart_count > 0) {
+      txt.textContent += ' (' + wd.restart_count + '× Restart)';
+    }
+  } else if (wd.bot_status === 'restarting') {
+    badge.className = 'bot-badge restarting';
+    txt.textContent = 'Bot startet neu…';
+  } else if (wd.bot_status === 'stopped') {
+    badge.className = 'bot-badge dead';
+    txt.textContent = 'Bot gestoppt';
+    header.classList.add('bot-dead');
+  } else {
+    badge.className = 'bot-badge unknown';
+    txt.textContent = 'Status unbekannt';
+  }
+}
+
 // ── Data Load ─────────────────────────────────────────────────────────────────
 async function loadData() {
   const banner = document.getElementById('banner');
@@ -788,6 +861,14 @@ async function loadData() {
     const r = await fetch('../data/trades.csv', { cache: 'no-store' });
     if (r.ok) trades = parseCSV(await r.text());
   } catch (_) {}
+
+  // Watchdog-Status
+  let watchdog = null;
+  try {
+    const r = await fetch('../data/watchdog_status.json', { cache: 'no-store' });
+    if (r.ok) watchdog = await r.json();
+  } catch (_) {}
+  renderBotStatus(watchdog);
 
   const safeState = state ?? { balance: START_BALANCE, realized_pnl_today: 0 };
   const balance   = Number(safeState.balance ?? START_BALANCE);
