@@ -219,14 +219,11 @@ body {
 
 /* ── Open Position ── */
 .pos { padding: 24px 32px 22px; }
-.pos-badge {
-  position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
-  padding: 5px 16px; border-radius: 99px; white-space: nowrap;
-  font-size: 14px; font-weight: 600; letter-spacing: .1em;
-  background: rgba(229,68,62,.14); border: 1px solid rgba(229,68,62,.5);
-  color: #f0726c; box-shadow: 0 0 16px rgba(229,68,62,.25);
-}
-.pos-grid { margin-top: 16px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.pos-empty { padding: 20px 0 4px; text-align: center; color: var(--text-dim); font-size: 16px; }
+.pos-entry-block { margin-top: 14px; }
+.pos-entry-block + .pos-entry-block { margin-top: 18px; border-top: 1px solid var(--border-subtle); padding-top: 18px; }
+.pos-entry-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.pos-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .pos-label { font-size: 15px; color: var(--text-dim); }
 .pos-val {
   margin-top: 4px; font-size: 22px; font-weight: 600;
@@ -298,6 +295,25 @@ body {
 .coins-open { font-size: 14px; font-weight: 600; color: var(--orange); letter-spacing: .04em; margin-left: 10px; }
 .daily-gate { font-size: 13px; font-weight: 500; letter-spacing: .04em; margin-left: 10px; }
 
+/* ── Statistik ── */
+.stats { padding: 22px 30px; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 14px; }
+.stat-cell {
+  padding: 16px 18px; border-radius: 14px;
+  background: rgba(255,255,255,.018); border: 1px solid var(--border-subtle);
+}
+.stat-label { font-size: 13px; font-weight: 500; letter-spacing: .1em; color: #80808a; }
+.stat-val {
+  margin-top: 6px; font-size: 30px; font-weight: 600; line-height: 1;
+  font-variant-numeric: tabular-nums; color: #e7e7ea;
+}
+.stat-sub { margin-top: 6px; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.stats-edge {
+  margin-top: 16px; padding: 12px 16px; border-radius: 12px;
+  font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums;
+  background: rgba(255,255,255,.02); border: 1px solid var(--border-subtle);
+}
+
 /* ── Content layout ── */
 .content-row {
   display: flex; flex-direction: row;
@@ -366,11 +382,13 @@ body {
 
 @media (max-width: 1100px) {
   .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .charts-row { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
   .shell { padding: 24px 18px; }
   .kpi-row { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: 1fr; }
   .header { grid-template-columns: 1fr; gap: 16px; }
   .hdr-right { justify-content: flex-start; }
 }
@@ -491,14 +509,8 @@ body {
 
       <!-- OPEN POSITION -->
       <section class="panel pos">
-        <span class="pos-badge" id="pos-badge">KEINE POSITION</span>
         <div class="panel-title">OFFENE POSITION</div>
-        <div class="pos-grid">
-          <div><div class="pos-label">Entry</div><div class="pos-val" id="pos-entry">—</div></div>
-          <div><div class="pos-label">Stop Loss</div><div class="pos-val" id="pos-sl">—</div></div>
-          <div><div class="pos-label">TP1</div><div class="pos-val" id="pos-tp1">—</div></div>
-          <div><div class="pos-label">Unrealisiert PnL</div><div class="pos-val" id="pos-upnl">—</div></div>
-        </div>
+        <div id="pos-rows"></div>
       </section>
 
       <!-- CHARTS -->
@@ -511,6 +523,37 @@ body {
           <div class="panel-title">PNL PRO TRADE</div>
           <div class="chart-wrap"><canvas id="chart-bar"></canvas></div>
         </div>
+      </section>
+
+      <!-- STATISTIK -->
+      <section class="panel stats">
+        <div style="display:flex;align-items:center;">
+          <div class="panel-title">STATISTIK</div>
+          <span id="stats-age" style="font-size:13px;font-weight:400;color:var(--text-faint);letter-spacing:.04em;margin-left:10px;"></span>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-cell">
+            <div class="stat-label">EXPECTANCY / TRADE</div>
+            <div class="stat-val" id="st-exp">—</div>
+            <div class="stat-sub" id="st-exp-sub">&nbsp;</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">PROFIT-FACTOR</div>
+            <div class="stat-val" id="st-pf">—</div>
+            <div class="stat-sub" id="st-pf-sub">&nbsp;</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">MAX-DRAWDOWN</div>
+            <div class="stat-val" id="st-dd">—</div>
+            <div class="stat-sub">&nbsp;</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-label">GESAMT-GEBÜHREN</div>
+            <div class="stat-val" id="st-fees">—</div>
+            <div class="stat-sub" id="st-fees-sub">&nbsp;</div>
+          </div>
+        </div>
+        <div class="stats-edge" id="st-edge"></div>
       </section>
 
       <!-- TRADE JOURNAL -->
@@ -816,41 +859,33 @@ function renderMetrics(state, trades) {
     : '0 0 12px rgba(232,88,80,.5)';
 }
 
-function renderPosition(pos, symbol) {
-  const badge = document.getElementById('pos-badge');
-  const ids   = ['pos-entry', 'pos-sl', 'pos-tp1', 'pos-upnl'];
+function renderOpenPositions(positions) {
+  const wrap = document.getElementById('pos-rows');
+  const open = Object.entries(positions).filter(([, v]) => v != null);
 
-  if (!pos) {
-    badge.textContent      = 'KEINE POSITION';
-    badge.style.background  = 'rgba(229,68,62,.14)';
-    badge.style.borderColor = 'rgba(229,68,62,.5)';
-    badge.style.color       = '#f0726c';
-    badge.style.boxShadow    = '0 0 16px rgba(229,68,62,.25)';
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      el.textContent = '—';
-      el.style.color = '#4a4a52';
-    });
+  if (open.length === 0) {
+    wrap.innerHTML = '<div class="pos-empty">Keine offenen Positionen</div>';
     return;
   }
 
-  const isLong = String(pos.direction).toLowerCase() === 'long';
-  const symLabel = symbol ? ' · ' + symbol.replace('/USDT', '') : '';
-  badge.textContent       = (isLong ? '◆ LONG' : '◆ SHORT') + symLabel;
-  badge.style.background  = isLong ? 'rgba(54,209,127,.14)' : 'rgba(229,68,62,.14)';
-  badge.style.borderColor = isLong ? 'rgba(54,209,127,.5)'  : 'rgba(229,68,62,.5)';
-  badge.style.color       = isLong ? '#3ad985' : '#f0726c';
-  badge.style.boxShadow    = isLong ? '0 0 16px rgba(54,209,127,.25)' : '0 0 16px rgba(229,68,62,.25)';
-
-  const set = (id, txt, color) => {
-    const el = document.getElementById(id);
-    el.textContent = txt;
-    el.style.color = color;
-  };
-  set('pos-entry', deDE(pos.entry), '#e7e7ea');
-  set('pos-sl',    deDE(pos.sl),    C_RED);
-  set('pos-tp1',   deDE(pos.tp1),   C_GREEN);
-  set('pos-upnl',  '—',             '#4a4a52');
+  wrap.innerHTML = open.map(([sym, pos]) => {
+    const isLong   = String(pos.direction).toLowerCase() === 'long';
+    const dirClass = isLong ? 'long' : 'short';
+    const dirLabel = isLong ? '◆ LONG' : '◆ SHORT';
+    const shortSym = sym.replace('/USDT', '');
+    return `<div class="pos-entry-block">
+      <div class="pos-entry-header">
+        <span class="dir-pill ${dirClass}">${dirLabel}</span>
+        <span class="cn-coin" style="font-size:19px">${shortSym}</span>
+      </div>
+      <div class="pos-grid">
+        <div><div class="pos-label">Entry</div><div class="pos-val" style="color:#e7e7ea">${deDE(pos.entry)}</div></div>
+        <div><div class="pos-label">Stop Loss</div><div class="pos-val" style="color:${C_RED}">${deDE(pos.sl)}</div></div>
+        <div><div class="pos-label">TP1</div><div class="pos-val" style="color:${C_GREEN}">${deDE(pos.tp1)}</div></div>
+        <div><div class="pos-label">Unrealisiert PnL</div><div class="pos-val">—</div></div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function renderCoins(state, trades) {
@@ -907,6 +942,65 @@ function renderCoins(state, trades) {
       <span style="font-size:15px">${recentHtml}</span>
     </div>`;
   }).join('');
+}
+
+function renderStats(stats) {
+  const exp  = document.getElementById('st-exp');
+  const pf   = document.getElementById('st-pf');
+  const dd   = document.getElementById('st-dd');
+  const fees = document.getElementById('st-fees');
+  const edge = document.getElementById('st-edge');
+  const age  = document.getElementById('stats-age');
+
+  if (!stats || (stats.total_trades ?? 0) === 0) {
+    [exp, pf, dd, fees].forEach(el => { el.textContent = '—'; el.style.color = '#4a4a52'; });
+    document.getElementById('st-exp-sub').textContent = ' ';
+    document.getElementById('st-pf-sub').textContent = ' ';
+    document.getElementById('st-fees-sub').textContent = ' ';
+    edge.textContent = 'Noch keine abgeschlossenen Trades.';
+    edge.style.color = 'var(--text-dim)';
+    age.textContent = '';
+    return;
+  }
+
+  const e = Number(stats.expectancy);
+  exp.textContent = fmtPnl(e) + ' USDT';
+  exp.style.color = e >= 0 ? C_GREEN : C_RED;
+  document.getElementById('st-exp-sub').textContent =
+    stats.total_trades + ' Trades · ' + deDE(stats.win_rate_pct, 1) + ' % Treffer';
+
+  const pfv = stats.profit_factor;
+  pf.textContent = (pfv === null || pfv === undefined) ? '∞' : deDE(pfv, 2);
+  pf.style.color = (pfv === null || pfv >= 1) ? C_GREEN : C_RED;
+  document.getElementById('st-pf-sub').textContent =
+    (pfv === null) ? 'keine Verlierer' : (pfv >= 1 ? 'profitabel' : 'unprofitabel');
+
+  dd.textContent = deDE(stats.max_drawdown_pct, 2) + ' %';
+  dd.style.color = '#e7e7ea';
+
+  fees.textContent = deDE(stats.total_fees) + ' USDT';
+  fees.style.color = '#e7e7ea';
+  document.getElementById('st-fees-sub').textContent =
+    'Brutto: ' + fmtPnl(stats.gross_pnl);
+
+  // Edge-Einordnung: effektives RR (Avg-Win/Avg-Loss) → Break-even-Trefferquote.
+  const aw = Number(stats.avg_win), al = Number(stats.avg_loss);
+  if (al !== 0 && stats.wins > 0) {
+    const rrEff = Math.abs(aw / al);
+    const beWr  = 1 / (1 + rrEff) * 100;
+    const wr    = Number(stats.win_rate_pct);
+    const ok    = wr >= beWr;
+    edge.innerHTML =
+      'Effektives RR <b>' + deDE(rrEff, 2) + ' : 1</b> → Break-even-Trefferquote <b>' +
+      deDE(beWr, 1) + ' %</b> · aktuell <b style="color:' + (ok ? C_GREEN : C_RED) + '">' +
+      deDE(wr, 1) + ' %</b> ' + (ok ? '✓ über Schwelle' : '✗ unter Schwelle');
+    edge.style.color = 'var(--text-secondary)';
+  } else {
+    edge.textContent = 'Noch kein Gewinner — Edge nicht bewertbar.';
+    edge.style.color = 'var(--text-dim)';
+  }
+
+  if (stats.generated_at) age.textContent = 'Stand: ' + stats.generated_at;
 }
 
 function renderTable(trades) {
@@ -1017,17 +1111,23 @@ async function loadData() {
   } catch (_) {}
   renderBotStatus(watchdog);
 
+  // Statistik (stats.json — vom Loop pro Zyklus geschrieben)
+  let stats = null;
+  try {
+    const r = await fetch('../data/stats.json', { cache: 'no-store' });
+    if (r.ok) stats = await r.json();
+  } catch (_) {}
+  renderStats(stats);
+
   const safeState = state ?? { balance: START_BALANCE, realized_pnl_today: 0 };
   const balance   = Number(safeState.balance ?? START_BALANCE);
 
   // v2: positions dict; v1 fallback for backward compat
   const positions = safeState.positions
     ?? (safeState.open_position ? {'BTC/USDT': safeState.open_position} : {});
-  const openEntries = Object.entries(positions).filter(([, v]) => v != null);
-  const firstEntry  = openEntries.length > 0 ? openEntries[0] : null;
 
   renderMetrics(safeState, trades);
-  renderPosition(firstEntry ? firstEntry[1] : null, firstEntry ? firstEntry[0] : null);
+  renderOpenPositions(positions);
   renderCoins({...safeState, positions}, trades);
   renderEquity(trades, balance);
   renderBars(trades);

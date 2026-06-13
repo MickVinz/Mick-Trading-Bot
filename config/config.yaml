@@ -135,3 +135,16 @@ paper_trading:
   risk_pct: 1.0               # Risiko pro Trade in % der aktuellen Balance (Casper-Standard)
   leverage_cap: 3.0           # Notional-Cap: qty × entry ≤ balance × leverage_cap
   max_daily_loss_pct: 10.0    # GEAENDERT (war 3.0): kein neuer Entry wenn Tages-PnL ≤ -10 %
+  # --- Handelskosten ( ehrliche PnL-Simulation, 2026-06-13) ---
+  # Round-Trip-Kosten beim Close: Taker-Gebuehr beide Legs + Slippage je Market-Fill.
+  # Entry = Market (Kerzenschluss) -> Slippage. SL = Stop-Market -> Slippage.
+  # TP1 = Limit -> KEIN Slippage. Quelle: BingX Perp Standard-Tier.
+  taker_fee_pct: 0.05         # 0,05 % je Seite (BingX Taker, Standard-Tier)
+  slippage_pct: 0.02          # 0,02 % je Market-Fill (Startannahme, KALIBRIEREN je Coin)
+  # --- Buch-Notional-Cap (Korrelations-Schutz, 2026-06-13) ---
+  # Gesamt-Notional ALLER offenen Positionen <= balance × max_book_notional_x.
+  # Grund: 6 hoch-korrelierte Coins (~0,8-0,9) = effektiv EIN gehebelter Bet.
+  # Bei engen Stops kann jede Position bis leverage_cap (3x) Notional ziehen,
+  # 6 davon = bis 18x aggregiert. 6.0 begrenzt das aggregierte Exposure.
+  # 0 = Cap aus (kein Buch-Limit). KALIBRIEREN sobald Korrelations-Daten da sind.
+  max_book_notional_x: 6.0

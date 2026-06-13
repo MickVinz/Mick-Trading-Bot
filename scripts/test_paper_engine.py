@@ -37,7 +37,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.paper.journal import Journal
-from src.paper.paper_engine import _decide_symbol, _gate_open, check_exit, run_cycle, size_qty
+from src.paper.paper_engine import (
+    _book_notional, _decide_symbol, _gate_open, check_exit, exit_costs,
+    run_cycle, size_qty,
+)
 from src.paper.position import Position
 
 # ---------------------------------------------------------------------------
@@ -51,6 +54,19 @@ _BASE_CONFIG = {
         "risk_pct": 1.0,
         "leverage_cap": 3.0,
         "max_daily_loss_pct": 3.0,
+    },
+}
+
+# Wie _BASE_CONFIG, aber mit Gebuehren + Slippage (BingX-realistisch).
+_FEE_CONFIG = {
+    "market": {"symbols": ["BTC/USDT"], "timeframe": "5m"},
+    "paper_trading": {
+        "start_balance": 1000.0,
+        "risk_pct": 1.0,
+        "leverage_cap": 3.0,
+        "max_daily_loss_pct": 10.0,
+        "taker_fee_pct": 0.05,   # 0,05 % pro Seite
+        "slippage_pct": 0.02,    # 0,02 % pro Market-Fill
     },
 }
 
@@ -385,6 +401,133 @@ def test_run_cycle_shared_daily_gate():
                 "15. Geteiltes Tageslimit -10% pausiert alle Entries")
 
 
+# --- 16. exit_costs: Einheiten-Kosten (Taker beide Legs + Slippage) ---
+def test_exit_costs_unit():
+    pos = Position(entry=100.0, sl=99.0, tp1=102.0, qty=1.0,
+                   direction="long", entry_time=_ts(), divergence=False)
+    pt = {"taker_fee_pct": 0.05, "slippage_pct": 0.02}
+
+    # SL = Market-Fill: entry_fee 0.05 + exit_fee 0.0495 + entry_slip 0.02 + exit_slip 0.0198
+    cost_sl = exit_costs(pos, 99.0, "sl", pt)
+    _assert(abs(cost_sl - 0.1393) < 1e-6,
+            "16. exit_costs SL = 0.1393 (Taker beide + Slippage beide)")
+
+    # TP = Limit-Fill: KEIN Exit-Slippage → entry_fee 0.05 + exit_fee 0.051 + entry_slip 0.02
+    cost_tp = exit_costs(pos, 102.0, "tp1", pt)
+    _assert(abs(cost_tp - 0.121) < 1e-6,
+            "16. exit_costs TP = 0.121 (kein Exit-Slippage, Limit)")
+
+    # Ohne Gebuehren-Config → 0 (fee-freie Regression)
+    _assert(exit_costs(pos, 99.0, "sl", {}) == 0.0,
+            "16. exit_costs ohne Config = 0")
+
+
+# --- 17. TP-Exit mit Gebuehren: Netto-Gewinn < Brutto ---
+def test_tp_exit_with_fees():
+    with tempfile.TemporaryDirectory() as tmp:
+        j = _make_journal(_FEE_CONFIG, Path(tmp))
+        ts0 = _ts(0)
+        df0 = _make_df([_candle(ts0, close=100.0)])
+        setups = _make_setup(ts0, entry=100.0, sl=99.0, tp1=102.0)
+        _decide_symbol("BTC/USDT", df0, setups, j, _FEE_CONFIG, gate_open=True)
+
+        # qty=10 (Risiko 10 / SL-Abstand 1). Brutto-TP=20, Kosten=1.21 → Netto 18.79
+        ts1 = _ts(5)
+        df1 = _make_df([_candle(ts0), _candle(ts1, close=101.5, high=102.5, low=100.5)])
+        result = _decide_symbol("BTC/USDT", df1, pd.DataFrame(), j, _FEE_CONFIG, gate_open=True)
+
+        _assert(result["exit_reason"] == "tp1", "17. Fee-TP: Exit via TP1")
+        net = j.state["balance"] - 1000.0
+        _assert(abs(net - 18.79) < 0.01,
+                "17. Fee-TP: Netto +18.79 (< brutto +20 wegen Gebuehren)")
+
+
+# --- 18. SL-Exit mit Gebuehren: Netto-Verlust > Brutto ---
+def test_sl_exit_with_fees():
+    with tempfile.TemporaryDirectory() as tmp:
+        j = _make_journal(_FEE_CONFIG, Path(tmp))
+        ts0 = _ts(0)
+        df0 = _make_df([_candle(ts0, close=100.0)])
+        setups = _make_setup(ts0, entry=100.0, sl=99.0, tp1=102.0)
+        _decide_symbol("BTC/USDT", df0, setups, j, _FEE_CONFIG, gate_open=True)
+
+        # Brutto-SL=-10, Kosten=1.393 → Netto -11.393
+        ts1 = _ts(5)
+        df1 = _make_df([_candle(ts0), _candle(ts1, close=98.5, high=99.0, low=98.0)])
+        result = _decide_symbol("BTC/USDT", df1, pd.DataFrame(), j, _FEE_CONFIG, gate_open=True)
+
+        _assert(result["exit_reason"] == "sl", "18. Fee-SL: Exit via SL")
+        net_loss = 1000.0 - j.state["balance"]
+        _assert(abs(net_loss - 11.393) < 0.01,
+                "18. Fee-SL: Netto -11.393 (> brutto -10 wegen Gebuehren)")
+
+
+# --- 19. _book_notional: Summe qty × entry ueber alle offenen Positionen ---
+def test_book_notional():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0},
+        }
+        j = _make_journal(cfg, Path(tmp))
+        _assert(_book_notional(j) == 0.0, "19. _book_notional leer = 0")
+        j.set_position("BTC/USDT", Position(entry=100.0, sl=99.0, tp1=102.0, qty=2.0,
+                       direction="long", entry_time=_ts(), divergence=False))
+        j.set_position("ETH/USDT", Position(entry=50.0, sl=49.0, tp1=52.0, qty=3.0,
+                       direction="long", entry_time=_ts(), divergence=False))
+        # 2*100 + 3*50 = 350
+        _assert(_book_notional(j) == 350.0, "19. _book_notional = 350 (200+150)")
+
+
+# --- 20. Buch-Notional-Cap blockiert weiteren Entry ---
+def test_book_notional_cap_blocks():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0, "risk_pct": 1.0,
+                              "leverage_cap": 3.0, "max_daily_loss_pct": 10.0,
+                              "max_book_notional_x": 1.5},  # Cap = 1500 USDT Notional
+        }
+        j = _make_journal(cfg, Path(tmp))
+        last = _ts(0)
+        # Jeder Entry: entry 100, sl 99 -> qty 10 -> Notional 1000.
+        # BTC: 1000 <= 1500 -> oeffnet. ETH: 1000+1000=2000 > 1500 -> blockiert.
+        per_symbol = {
+            "BTC/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+            "ETH/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+        }
+        run_cycle(j, cfg, _per_symbol=per_symbol)
+        _assert(j.get_position("BTC/USDT") is not None,
+                "20. BTC geoeffnet (unter Cap)")
+        _assert(j.get_position("ETH/USDT") is None,
+                "20. ETH blockiert (Buch-Notional-Cap erreicht)")
+
+
+# --- 21. Ohne Cap-Config: beide oeffnen (Abwaertskompat) ---
+def test_book_notional_cap_disabled():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = {
+            "market": {"symbols": ["BTC/USDT", "ETH/USDT"], "timeframe": "5m"},
+            "paper_trading": {"start_balance": 1000.0, "risk_pct": 1.0,
+                              "leverage_cap": 3.0, "max_daily_loss_pct": 10.0},
+            # kein max_book_notional_x -> Cap aus
+        }
+        j = _make_journal(cfg, Path(tmp))
+        last = _ts(0)
+        per_symbol = {
+            "BTC/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+            "ETH/USDT": (_make_df([_candle(last, close=100.0)]),
+                         _make_setup(last, "long", 100.0, 99.0, 102.0)),
+        }
+        run_cycle(j, cfg, _per_symbol=per_symbol)
+        _assert(j.get_position("BTC/USDT") is not None
+                and j.get_position("ETH/USDT") is not None,
+                "21. Ohne Cap: beide oeffnen (Abwaertskompat)")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -407,6 +550,12 @@ def main() -> None:
     test_run_cycle_two_coins()
     test_run_cycle_no_parallel_limit()
     test_run_cycle_shared_daily_gate()
+    test_exit_costs_unit()
+    test_tp_exit_with_fees()
+    test_sl_exit_with_fees()
+    test_book_notional()
+    test_book_notional_cap_blocks()
+    test_book_notional_cap_disabled()
 
     print(f"\n{_pass_count + _fail_count} Tests: "
           f"{_pass_count} bestanden, {_fail_count} fehlgeschlagen.")
