@@ -242,7 +242,7 @@ body {
 .journal { padding: 22px 30px 14px; }
 .j-grid {
   display: grid;
-  grid-template-columns: 1.5fr 0.95fr 1fr 1fr 1fr 1fr 0.7fr 0.95fr 0.85fr;
+  grid-template-columns: 0.85fr 1.3fr 0.85fr 0.9fr 0.9fr 0.9fr 0.9fr 0.65fr 0.9fr 0.8fr;
   align-items: center;
 }
 .j-head {
@@ -274,6 +274,29 @@ body {
 .c-neg   { color: var(--red);   font-weight: 600; }
 .c-tp1r  { color: var(--orange); font-weight: 500; }
 .c-slr   { color: var(--red);    font-weight: 500; }
+
+/* ── Coin-Übersicht ── */
+.coins { padding: 22px 30px 14px; }
+.cn-grid {
+  display: grid;
+  grid-template-columns: 0.8fr 1.4fr 1fr 1fr 1fr 1.5fr;
+  align-items: center;
+}
+.cn-head {
+  padding: 12px 4px;
+  font-size: 14px; font-weight: 500; letter-spacing: .07em;
+  color: var(--text-dim); border-bottom: 1px solid var(--border-subtle);
+}
+.cn-row {
+  padding: 14px 4px;
+  font-size: 17px; font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid rgba(255,255,255,.045);
+}
+.cn-row:last-child { border-bottom: none; }
+.cn-coin { font-weight: 600; color: #e7e7ea; letter-spacing: .02em; }
+.cn-flat { color: var(--text-dim); }
+.coins-open { font-size: 14px; font-weight: 600; color: var(--orange); letter-spacing: .04em; margin-left: 10px; }
+.daily-gate { font-size: 13px; font-weight: 500; letter-spacing: .04em; margin-left: 10px; }
 
 /* ── Content layout ── */
 .content-row {
@@ -363,7 +386,7 @@ body {
   <header class="header">
     <div>
       <h1>MICK TRADING BOT</h1>
-      <div class="sub">BTC/USDT · Paper Trading</div>
+      <div class="sub">6 Coins · Shared Balance · Paper Trading</div>
     </div>
     <div class="hdr-center">
       <svg width="72" height="64" viewBox="0 0 100 90" fill="none" style="filter: drop-shadow(0 0 14px rgba(240,138,44,.45));">
@@ -453,6 +476,19 @@ body {
         </div>
       </section>
 
+      <!-- COIN OVERVIEW -->
+      <section class="panel coins" id="coins-panel">
+        <div style="display:flex;align-items:center;margin-bottom:6px;">
+          <div class="panel-title">COIN-ÜBERSICHT</div>
+          <span class="coins-open" id="coins-open-count"></span>
+          <span class="daily-gate" id="daily-gate-badge"></span>
+        </div>
+        <div class="cn-grid cn-head">
+          <span>COIN</span><span>STATUS</span><span>ENTRY</span><span>SL</span><span>TP1</span><span>LETZTE TRADES</span>
+        </div>
+        <div id="coin-rows"></div>
+      </section>
+
       <!-- OPEN POSITION -->
       <section class="panel pos">
         <span class="pos-badge" id="pos-badge">KEINE POSITION</span>
@@ -481,7 +517,7 @@ body {
       <section class="panel journal">
         <div class="panel-title" style="margin-bottom: 8px;">TRADE-JOURNAL</div>
         <div class="j-grid j-head">
-          <span>EINSTIEG</span><span>RICHTUNG</span><span>ENTRY</span><span>SL</span>
+          <span>SYMBOL</span><span>EINSTIEG</span><span>RICHTUNG</span><span>ENTRY</span><span>SL</span>
           <span>TP1</span><span>EXIT</span><span>GRUND</span>
           <span class="r">PNL (USD)</span><span class="r">PNL %</span>
         </div>
@@ -522,6 +558,8 @@ body {
 // ── Constants ─────────────────────────────────────────────────────────────────
 const START_BALANCE = 1000.0;
 const REFRESH_SEC   = 30;
+
+const SYMBOLS = ["BTC/USDT","ETH/USDT","SOL/USDT","DOGE/USDT","BNB/USDT","ADA/USDT"];
 
 const C_ORANGE = '#e9a951';
 const C_GREEN  = '#3ad985';
@@ -778,7 +816,7 @@ function renderMetrics(state, trades) {
     : '0 0 12px rgba(232,88,80,.5)';
 }
 
-function renderPosition(pos) {
+function renderPosition(pos, symbol) {
   const badge = document.getElementById('pos-badge');
   const ids   = ['pos-entry', 'pos-sl', 'pos-tp1', 'pos-upnl'];
 
@@ -797,7 +835,8 @@ function renderPosition(pos) {
   }
 
   const isLong = String(pos.direction).toLowerCase() === 'long';
-  badge.textContent       = (isLong ? '◆ LONG' : '◆ SHORT');
+  const symLabel = symbol ? ' · ' + symbol.replace('/USDT', '') : '';
+  badge.textContent       = (isLong ? '◆ LONG' : '◆ SHORT') + symLabel;
   badge.style.background  = isLong ? 'rgba(54,209,127,.14)' : 'rgba(229,68,62,.14)';
   badge.style.borderColor = isLong ? 'rgba(54,209,127,.5)'  : 'rgba(229,68,62,.5)';
   badge.style.color       = isLong ? '#3ad985' : '#f0726c';
@@ -812,6 +851,62 @@ function renderPosition(pos) {
   set('pos-sl',    deDE(pos.sl),    C_RED);
   set('pos-tp1',   deDE(pos.tp1),   C_GREEN);
   set('pos-upnl',  '—',             '#4a4a52');
+}
+
+function renderCoins(state, trades) {
+  const positions = state.positions ?? {};
+  const openCount = Object.values(positions).filter(p => p != null).length;
+
+  const countEl = document.getElementById('coins-open-count');
+  countEl.textContent = openCount > 0 ? openCount + ' / 6 offen' : 'alle flach';
+
+  const dayStart = Number(state.day_start_balance ?? state.balance ?? START_BALANCE);
+  const pnlToday = Number(state.realized_pnl_today ?? 0);
+  const lossPct  = dayStart > 0 ? (pnlToday / dayStart * 100) : 0;
+  const gateEl   = document.getElementById('daily-gate-badge');
+  if (lossPct <= -10) {
+    gateEl.textContent  = '⛔ Tageslimit erreicht';
+    gateEl.style.color  = C_RED;
+  } else {
+    gateEl.textContent = '';
+  }
+
+  const wrap = document.getElementById('coin-rows');
+  wrap.innerHTML = SYMBOLS.map(sym => {
+    const pos      = positions[sym] ?? null;
+    const shortSym = sym.replace('/USDT', '');
+    const lastTrades = trades.filter(t => (t.symbol ?? 'BTC/USDT') === sym).slice(-3);
+
+    let statusHtml, entryTxt, slTxt, tp1Txt;
+    if (pos) {
+      const isLong = String(pos.direction).toLowerCase() === 'long';
+      statusHtml = `<span class="dir-pill ${isLong ? 'long' : 'short'}">${isLong ? 'LONG' : 'SHORT'}</span>`;
+      entryTxt   = `<span class="c-px">${deDE(pos.entry)}</span>`;
+      slTxt      = `<span class="c-sl">${deDE(pos.sl)}</span>`;
+      tp1Txt     = `<span class="c-tp">${deDE(pos.tp1)}</span>`;
+    } else {
+      statusHtml = `<span class="cn-flat">flach</span>`;
+      entryTxt   = `<span class="cn-flat">—</span>`;
+      slTxt      = `<span class="cn-flat">—</span>`;
+      tp1Txt     = `<span class="cn-flat">—</span>`;
+    }
+
+    const recentHtml = lastTrades.length === 0
+      ? `<span class="cn-flat">—</span>`
+      : lastTrades.map(t => {
+          const pnl = Number(t.pnl_usd);
+          return `<span class="${pnl >= 0 ? 'c-pos' : 'c-neg'}" style="margin-right:8px">${fmtPnl(pnl)}</span>`;
+        }).join('');
+
+    return `<div class="cn-grid cn-row">
+      <span class="cn-coin">${shortSym}</span>
+      ${statusHtml}
+      ${entryTxt}
+      ${slTxt}
+      ${tp1Txt}
+      <span style="font-size:15px">${recentHtml}</span>
+    </div>`;
+  }).join('');
 }
 
 function renderTable(trades) {
@@ -829,7 +924,9 @@ function renderTable(trades) {
     const reasonCls = reason === 'SL' ? 'c-slr' : 'c-tp1r';
     const dirLabel  = isLong ? 'LONG' : 'SHORT ◆';
     const dirClass  = isLong ? 'long' : 'short';
+    const sym = (t.symbol ?? 'BTC/USDT').replace('/USDT', '');
     return `<div class="j-grid j-row">
+      <span class="cn-coin">${sym}</span>
       <span class="c-date">${entryTs}</span>
       <span><span class="dir-pill ${dirClass}">${dirLabel}</span></span>
       <span class="c-px">${deDE(t.entry)}</span>
@@ -923,8 +1020,15 @@ async function loadData() {
   const safeState = state ?? { balance: START_BALANCE, realized_pnl_today: 0 };
   const balance   = Number(safeState.balance ?? START_BALANCE);
 
+  // v2: positions dict; v1 fallback for backward compat
+  const positions = safeState.positions
+    ?? (safeState.open_position ? {'BTC/USDT': safeState.open_position} : {});
+  const openEntries = Object.entries(positions).filter(([, v]) => v != null);
+  const firstEntry  = openEntries.length > 0 ? openEntries[0] : null;
+
   renderMetrics(safeState, trades);
-  renderPosition(safeState.open_position ?? null);
+  renderPosition(firstEntry ? firstEntry[1] : null, firstEntry ? firstEntry[0] : null);
+  renderCoins({...safeState, positions}, trades);
   renderEquity(trades, balance);
   renderBars(trades);
   renderTable(trades);
