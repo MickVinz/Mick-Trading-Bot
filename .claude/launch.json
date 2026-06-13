@@ -5,7 +5,14 @@
       "name": "dashboard",
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "8080"],
-      "port": 8080
+      "port": 8080,
+      "autoPort": false
+    },
+    {
+      "name": "dashboard-preview",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8081"],
+      "port": 8081
     }
   ]
 }

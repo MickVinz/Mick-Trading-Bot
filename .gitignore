@@ -24,3 +24,7 @@ data/
 Thumbs.db
 .idea/
 .vscode/
+
+# --- Lokale Tool-Configs (machine-specific) ---
+.mcp.json
+session-status.md
