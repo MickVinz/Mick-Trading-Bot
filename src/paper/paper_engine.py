@@ -213,6 +213,9 @@ def _exit_symbol(symbol: str, df: pd.DataFrame, journal: Journal, pt_cfg: dict) 
         pnl_usd=pnl_usd, fees_usd=fees,
         balance_after=state["balance"],
     )
+    # Sofort speichern: CSV-Zeile und state.json bleiben synchron auch bei Absturz.
+    # Ohne das: Neustart sieht Position noch offen → doppelter Trade-Eintrag.
+    journal.save_state()
     result["exit_reason"] = reason
     result["exit_price"] = exit_price
     return result

@@ -141,6 +141,85 @@ def fetch_bingx_klines(
     return df[["timestamp", "open", "high", "low", "close", "volume"]].reset_index(drop=True)
 
 
+def fetch_bingx_klines_range(
+    symbol: str,
+    interval: str,
+    start_dt: "pd.Timestamp",
+    end_dt: "pd.Timestamp",
+    verbose: bool = False,
+) -> "pd.DataFrame":
+    """
+    Lädt BingX-Kerzen für einen historischen Zeitraum (paginiert).
+
+    Macht so viele GET-Anfragen wie nötig (je max. 1000 Kerzen), bis
+    start_dt..end_dt vollständig abgedeckt ist. Gibt einen chronologisch
+    sortierten DataFrame im gleichen Format wie fetch_bingx_klines() zurück.
+
+    symbol    : Format "BTC-USDT" (BingX-Stil, Bindestrich).
+    start_dt  : UTC-aware pd.Timestamp (inklusive).
+    end_dt    : UTC-aware pd.Timestamp (exklusive — laufende Kerze wird verworfen).
+    verbose   : True = Fortschritts-Prints alle 10 Seiten.
+    """
+    import time as _sleep_mod
+
+    interval_ms = _INTERVAL_MS.get(interval)
+    if interval_ms is None:
+        raise ValueError(f"Unbekanntes Intervall '{interval}'.")
+
+    cursor_ms = int(start_dt.timestamp() * 1000)
+    end_ms = int(end_dt.timestamp() * 1000)
+    frames = []
+    page = 0
+
+    while cursor_ms < end_ms:
+        payload = _get("/openApi/swap/v2/quote/klines", {
+            "symbol": symbol,
+            "interval": interval,
+            "limit": 1000,
+            "startTime": cursor_ms,
+        })
+        raw = payload.get("data", [])
+        if not raw:
+            break
+
+        df = pd.DataFrame(raw)
+        df["timestamp"] = pd.to_datetime(df["time"].astype("int64"), unit="ms", utc=True)
+        for col in ("open", "high", "low", "close", "volume"):
+            df[col] = df[col].astype(float)
+        df = df.sort_values("timestamp").reset_index(drop=True)
+
+        # Kerzen außerhalb des Zielbereichs abschneiden
+        df = df[df["timestamp"] < end_dt]
+        if df.empty:
+            break
+        frames.append(df[["timestamp", "open", "high", "low", "close", "volume"]])
+
+        last_open_ms = int(df.iloc[-1]["timestamp"].timestamp() * 1000)
+        cursor_ms = last_open_ms + interval_ms
+        page += 1
+
+        if verbose and page % 10 == 0:
+            total_span = end_ms - int(start_dt.timestamp() * 1000)
+            done = cursor_ms - int(start_dt.timestamp() * 1000)
+            pct = min(100.0, done / total_span * 100)
+            print(f"    {symbol}: {pct:.0f}% ({page} Seiten)...", flush=True)
+
+        if len(raw) < 1000:
+            break
+
+        _sleep_mod.sleep(0.15)  # Rate Limit
+
+    if not frames:
+        return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+    result = pd.concat(frames, ignore_index=True)
+    result = (result
+              .drop_duplicates("timestamp")
+              .sort_values("timestamp")
+              .reset_index(drop=True))
+    return result
+
+
 def fetch_bingx_price(symbol: str = "BTC-USDT") -> float:
     """
     Holt den aktuellen Preis (Mark/Last) vom öffentlichen BingX-Endpunkt.
