@@ -36,6 +36,7 @@ import pandas as pd
 import yaml
 
 from src.config_utils import get_symbols, resolve_config
+from src.exchange.binance_client import fetch_binance_klines_range
 from src.exchange.bingx_client import fetch_bingx_klines_range
 from src.indicators.mfi import calculate_mfi
 from src.indicators.wavetrend import calculate_wavetrend, detect_dots
@@ -70,14 +71,22 @@ _FIB_TOLERANCE_PCT = 0.5 # +/- 0.5% Toleranzband um das Level
 # Daten + Indikatoren
 # ---------------------------------------------------------------------------
 
-def _load_and_prepare(symbol: str, interval: str, start_dt, end_dt, config: dict,
-                      verbose: bool = False):
-    """Laedt und bereitet einen einzelnen Timeframe vor (WaveTrend + MFI)."""
+def _fetch(symbol: str, interval: str, start_dt, end_dt,
+           data_source: str = "bingx", verbose: bool = False) -> pd.DataFrame:
+    """Einheitlicher Daten-Fetcher fuer BingX oder Binance."""
+    if data_source == "binance":
+        return fetch_binance_klines_range(symbol, interval, start_dt, end_dt, verbose=verbose)
     bingx_sym = symbol.replace("/", "-")
+    return fetch_bingx_klines_range(bingx_sym, interval, start_dt, end_dt, verbose=verbose)
+
+
+def _load_and_prepare(symbol: str, interval: str, start_dt, end_dt, config: dict,
+                      verbose: bool = False, data_source: str = "bingx"):
+    """Laedt und bereitet einen einzelnen Timeframe vor (WaveTrend + MFI)."""
     sym_cfg = resolve_config(config, symbol)
     wt = sym_cfg["wavetrend"]
 
-    df = fetch_bingx_klines_range(bingx_sym, interval, start_dt, end_dt, verbose=verbose)
+    df = _fetch(symbol, interval, start_dt, end_dt, data_source=data_source, verbose=verbose)
     if df.empty:
         return df
 
@@ -88,15 +97,20 @@ def _load_and_prepare(symbol: str, interval: str, start_dt, end_dt, config: dict
     return df
 
 
-def _load_entry_tf(symbol: str, start_dt, end_dt, config: dict):
-    """Laedt 5m-Daten inkl. Setups und Trade-Levels fuer die Entry-Entscheidung."""
-    bingx_sym = symbol.replace("/", "-")
+def _load_entry_tf(symbol: str, start_dt, end_dt, config: dict,
+                   data_source: str = "bingx", entry_signal: str = "anchor"):
+    """Laedt 5m-Daten inkl. Setups und Trade-Levels fuer die Entry-Entscheidung.
+
+    entry_signal:
+      "anchor"     = Anchor-Trigger nach Spec (wt1 ±Schwelle + Trigger-Welle, selten).
+      "divergence" = Signal bei jedem Wellen-Ende mit aktiver Divergenz (kein
+                     ±60-Anker noetig) — deutlich haeufiger.
+    """
     sym_cfg = resolve_config(config, symbol)
     wt = sym_cfg["wavetrend"]
 
-    df = fetch_bingx_klines_range(
-        bingx_sym, _ENTRY_INTERVAL, start_dt, end_dt, verbose=True
-    )
+    df = _fetch(symbol, _ENTRY_INTERVAL, start_dt, end_dt,
+                data_source=data_source, verbose=True)
     if df.empty:
         return df, pd.DataFrame()
 
@@ -104,8 +118,11 @@ def _load_entry_tf(symbol: str, start_dt, end_dt, config: dict):
                              wt2_sma_length=wt["wt2_sma_length"])
     df = detect_dots(df)
     df = calculate_mfi(df, period=sym_cfg["mfi"]["period"])
-    setups = detect_setups(df, sym_cfg)
-    setups = calculate_trade_levels(df, setups, sym_cfg)
+    if entry_signal == "divergence":
+        setups = build_divergence_setups(df, sym_cfg)
+    else:
+        setups = detect_setups(df, sym_cfg)
+        setups = calculate_trade_levels(df, setups, sym_cfg)
     return df, setups
 
 
@@ -123,39 +140,126 @@ def build_divergence_state(df: pd.DataFrame, config: dict) -> pd.Series:
         None    = keine aktive Divergenz
 
     Aktivierung: wenn detect_divergence() True liefert.
-    Invalidierung: wenn wt1 die Nulllinie in der Gegenrichtung kreuzt
-        (Long: wt1 > 0 loescht bullische Div.; Short: wt1 < 0 loescht bearische).
+    Invalidierung: wenn wt1 die Nulllinie in der Gegenrichtung kreuzt.
+
+    Implementierung: O(n) statt O(n*window) — Pivot-Erkennung vektorisiert
+    via Rolling-Min/Max, Fenster-Verwaltung per Deque (kein pandas-iloc pro Kerze).
     """
     if df.empty or "wt1" not in df.columns:
         return pd.Series([None] * len(df), index=df.index)
 
-    n = len(df)
-    states = [None] * n
-    active: Optional[str] = None
+    from collections import deque
 
-    # Genuegend Aufwaerm-Kerzen fuer Pivot-Berechnung benoetigt
     div_cfg = config.get("divergence", {})
-    start_i = int(div_cfg.get("divergence_window", 20)) + int(div_cfg.get("pivot_lookback", 3)) + 5
+    window = int(div_cfg.get("divergence_window", 20))
+    lookback = int(div_cfg.get("pivot_lookback", 3))
+    start_i = window + lookback + 5
+
+    n = len(df)
+    lb = lookback
+    lows = df["low"].values
+    highs = df["high"].values
+    wt1_arr = df["wt1"].values
+
+    # Pivot-Erkennung vektorisiert: Kerze p ist Pivot-Tief wenn low[p] == min(low[p-lb:p+lb+1])
+    # NaN an den Raendern (min_periods nicht erfuellt) → Vergleich ergibt False → kein Pivot
+    low_s = pd.Series(lows)
+    high_s = pd.Series(highs)
+    roll_min = low_s.rolling(2 * lb + 1, center=True, min_periods=2 * lb + 1).min().values
+    roll_max = high_s.rolling(2 * lb + 1, center=True, min_periods=2 * lb + 1).max().values
+    is_pivot_low = (lows == roll_min)
+    is_pivot_high = (highs == roll_max)
+
+    states: list = [None] * n
+    active: Optional[str] = None
+    low_q: deque = deque()   # (idx, price, wt1) — Pivot-Tiefs im Fenster
+    high_q: deque = deque()  # (idx, price, wt1) — Pivot-Hochs im Fenster
 
     for i in range(start_i, n):
-        wt1 = float(df["wt1"].iloc[i])
+        # Neu bestaetigten Pivot aufnehmen (lb Kerzen rechts benoetigt → ci = i - lb)
+        ci = i - lb
+        if ci >= 0:
+            if is_pivot_low[ci]:
+                low_q.append((ci, lows[ci], wt1_arr[ci]))
+            if is_pivot_high[ci]:
+                high_q.append((ci, highs[ci], wt1_arr[ci]))
+
+        # Veraltete Pivots entfernen (ausserhalb Divergenz-Fenster)
+        oldest = i - window
+        while low_q and low_q[0][0] < oldest:
+            low_q.popleft()
+        while high_q and high_q[0][0] < oldest:
+            high_q.popleft()
 
         # Nulllinien-Kreuzungs-Invalidierung (Gegenrichtung)
-        if active == "long" and wt1 > 0:
+        w1 = wt1_arr[i]
+        if active == "long" and w1 > 0:
             active = None
-        elif active == "short" and wt1 < 0:
+        elif active == "short" and w1 < 0:
             active = None
 
-        # Neue Divergenz pruefen (kann bestehende ueberschreiben)
-        for direction in ("long", "short"):
-            result = detect_divergence(df, i, direction, config)
-            if result["divergence_active"]:
-                active = direction
-                break
+        # Bullische Divergenz: Preis Lower Low + wt1 Higher Low (letzte 2 Pivot-Tiefs)
+        long_fired = False
+        if len(low_q) >= 2:
+            p_old, p_new = low_q[-2], low_q[-1]
+            if p_new[1] < p_old[1] and p_new[2] > p_old[2]:
+                active = "long"
+                long_fired = True
+
+        # Bearische Divergenz: Preis Higher High + wt1 Lower High (letzte 2 Pivot-Hochs)
+        if not long_fired and len(high_q) >= 2:
+            p_old, p_new = high_q[-2], high_q[-1]
+            if p_new[1] > p_old[1] and p_new[2] < p_old[2]:
+                active = "short"
 
         states[i] = active
 
     return pd.Series(states, index=df.index)
+
+
+def build_divergence_setups(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """
+    5m-Einstiegssignale = Divergenz bei Wellen-Ende (KEIN ±60-Anker).
+
+    Idee (User-Spec): Sobald eine WaveTrend-Welle endet und dabei eine
+    bullische/bearische Divergenz bestaetigt wird, ist das ein Signal.
+    Konkret = die Kerze, an der der Divergenz-State NEU aktiv wird
+    (von None/Gegenrichtung -> long bzw. short). Pro Aktivierung 1 Signal.
+
+    Liefert dieselben Spalten, die simulate_mtf erwartet. SL/TP1 sind
+    Platzhalter (= entry); im Fixed-Margin-Modus berechnet simulate_mtf die
+    echten Level aus margin/leverage/tp_rr. tp1 ist gesetzt (notna) damit der
+    Handelbarkeits-Check besteht.
+    """
+    state = build_divergence_state(df, config)
+    sv = state.values
+    closes = df["close"].values
+    mfis = df["mfi"].values if "mfi" in df.columns else [float("nan")] * len(df)
+
+    rows = []
+    prev = None
+    for i in range(len(df)):
+        cur = sv[i]
+        if cur in ("long", "short") and cur != prev:
+            entry = float(closes[i])
+            mfi_v = float(mfis[i]) if not pd.isna(mfis[i]) else None
+            rows.append({
+                "time": df["timestamp"].iloc[i],
+                "direction": cur,
+                "entry": round(entry, 2),
+                "sl": round(entry, 2),     # Platzhalter (Fixed-Margin ueberschreibt)
+                "tp1": round(entry, 2),    # notna() -> handelbar
+                "setup_valid": True,
+                "sl_zu_eng": False,
+                "warmup_artefact": False,
+                "divergence_active": True,
+                "trigger_mfi": mfi_v,
+            })
+        prev = cur
+
+    cols = ["time", "direction", "entry", "sl", "tp1", "setup_valid",
+            "sl_zu_eng", "warmup_artefact", "divergence_active", "trigger_mfi"]
+    return pd.DataFrame(rows, columns=cols)
 
 
 def _state_at_time(state_series: pd.Series, df_htf: pd.DataFrame,
@@ -191,14 +295,16 @@ class MTFPosition:
     entry_time: pd.Timestamp
     divergence: bool
     tp1_hit: bool = False
+    partial: bool = True   # True = 50/50-Teilausstieg, False = volle Position auf einmal
 
     @classmethod
-    def open(cls, entry, sl, tp1, tp2, qty, direction, entry_time, divergence):
+    def open(cls, entry, sl, tp1, tp2, qty, direction, entry_time, divergence,
+             partial=True):
         return cls(
             entry=entry, sl=sl, tp1=tp1, tp2=tp2,
             qty_total=qty, qty_remaining=qty,
             direction=direction, entry_time=entry_time,
-            divergence=divergence, tp1_hit=False,
+            divergence=divergence, tp1_hit=False, partial=partial,
         )
 
     def check_exit(self, candle: pd.Series):
@@ -213,11 +319,18 @@ class MTFPosition:
         """
         if self.direction == "long":
             sl_hit = candle["low"] <= self.sl
-            if not self.tp1_hit:
-                tp1_hit = candle["high"] >= self.tp1
+            tp_hit = candle["high"] >= self.tp1
+            # Voller Ausstieg (kein Teilausstieg): ganze Position bei TP oder SL.
+            if not self.partial:
                 if sl_hit:
                     return "sl", self.sl, self.qty_remaining
-                if tp1_hit:
+                if tp_hit:
+                    return "tp", self.tp1, self.qty_remaining
+                return None, None, 0
+            if not self.tp1_hit:
+                if sl_hit:
+                    return "sl", self.sl, self.qty_remaining
+                if tp_hit:
                     return "tp1", self.tp1, self.qty_remaining * 0.5
                 return None, None, 0
             else:
@@ -229,11 +342,17 @@ class MTFPosition:
                 return None, None, 0
         else:  # short
             sl_hit = candle["high"] >= self.sl
-            if not self.tp1_hit:
-                tp1_hit = candle["low"] <= self.tp1
+            tp_hit = candle["low"] <= self.tp1
+            if not self.partial:
                 if sl_hit:
                     return "sl", self.sl, self.qty_remaining
-                if tp1_hit:
+                if tp_hit:
+                    return "tp", self.tp1, self.qty_remaining
+                return None, None, 0
+            if not self.tp1_hit:
+                if sl_hit:
+                    return "sl", self.sl, self.qty_remaining
+                if tp_hit:
                     return "tp1", self.tp1, self.qty_remaining * 0.5
                 return None, None, 0
             else:
@@ -318,10 +437,103 @@ def _precompute_lookup(symbol_data: dict, htf_states: dict, tfs: list) -> dict:
     return lookup
 
 
-def _precompute_fib_lookup(symbol_data: dict, htf_states: dict) -> dict:
+def _precompute_mfi_lookup(symbol_data: dict, htf_states: dict, tfs: list) -> dict:
+    """
+    Wie _precompute_lookup, aber liefert den MFI-WERT (statt Divergenz-State)
+    pro TF auf 5m-Timestamps gemappt (ffill, Repaint-sicher via close_time).
+
+    Wird fuer den Money-Flow-Richtungsfilter auf den HTF (Fokus-TF, z.B. 15m)
+    genutzt: HTF bestimmt die Richtung, MFI muss sie bestaetigen.
+
+    Rueckgabe: {symbol: {tf: pd.Series(index=5m-ts, values=mfi float)}}
+    """
+    lookup: dict = {}
+    for symbol, (df_5m, _) in symbol_data.items():
+        ts_5m = pd.DatetimeIndex(df_5m["timestamp"])
+        htf = htf_states.get(symbol, {})
+        lookup[symbol] = {}
+
+        for tf in tfs:
+            df_htf = htf.get(f"df_{tf}")
+            ims = htf.get(f"ims_{tf}", 0)
+
+            if df_htf is None or df_htf.empty or "mfi" not in df_htf.columns:
+                lookup[symbol][tf] = pd.Series(
+                    [float("nan")] * len(ts_5m), index=ts_5m, dtype=float
+                )
+                continue
+
+            close_times = pd.DatetimeIndex(
+                df_htf["timestamp"] + pd.Timedelta(milliseconds=ims)
+            )
+            mfi_s = pd.Series(df_htf["mfi"].values, index=close_times, dtype=float)
+            mfi_s = mfi_s[~mfi_s.index.duplicated(keep="last")].sort_index()
+
+            combined_idx = mfi_s.index.union(ts_5m)
+            combined = mfi_s.reindex(combined_idx).ffill()
+            lookup[symbol][tf] = combined.reindex(ts_5m)
+
+    return lookup
+
+
+def _precompute_wtdir_lookup(symbol_data: dict, htf_states: dict, tfs: list) -> dict:
+    """
+    Wie _precompute_lookup, aber liefert die reine WaveTrend-RICHTUNG (statt
+    Divergenz-State): "long" wenn wt1 >= wt2 (Momentum aufwaerts), sonst "short".
+
+    Fuer den Timing-Modus der Entry-Kaskade: das LTF (z.B. 1m) braucht KEINE
+    eigene Divergenz, sondern nur WaveTrend-Richtung passend zum Gate
+    ("5m/1m nur fuer den Einstieg"). Repaint-sicher via close_time + ffill.
+
+    Rueckgabe: {symbol: {tf: pd.Series(index=5m-ts, values="long"|"short"|None)}}
+    """
+    lookup: dict = {}
+    for symbol, (df_5m, _) in symbol_data.items():
+        ts_5m = pd.DatetimeIndex(df_5m["timestamp"])
+        htf = htf_states.get(symbol, {})
+        lookup[symbol] = {}
+
+        for tf in tfs:
+            df_htf = htf.get(f"df_{tf}")
+            ims = htf.get(f"ims_{tf}", 0)
+
+            if (df_htf is None or df_htf.empty
+                    or "wt1" not in df_htf.columns or "wt2" not in df_htf.columns):
+                lookup[symbol][tf] = pd.Series(
+                    [None] * len(ts_5m), index=ts_5m, dtype=object
+                )
+                continue
+
+            wt1 = df_htf["wt1"].values
+            wt2 = df_htf["wt2"].values
+            dirs = pd.Series(
+                ["long" if a >= b else "short" for a, b in zip(wt1, wt2)],
+                dtype=object,
+            )
+            # Aufwaermphase (NaN) -> keine Richtung
+            nan_mask = pd.isna(df_htf["wt1"].values) | pd.isna(df_htf["wt2"].values)
+            dirs[nan_mask] = None
+
+            close_times = pd.DatetimeIndex(
+                df_htf["timestamp"] + pd.Timedelta(milliseconds=ims)
+            )
+            dir_s = pd.Series(dirs.values, index=close_times, dtype=object)
+            dir_s = dir_s[~dir_s.index.duplicated(keep="last")].sort_index()
+
+            combined_idx = dir_s.index.union(ts_5m)
+            combined = dir_s.reindex(combined_idx).ffill()
+            lookup[symbol][tf] = combined.reindex(ts_5m)
+
+    return lookup
+
+
+def _precompute_fib_lookup(symbol_data: dict, htf_states: dict,
+                           swing_tf: str = "1h") -> dict:
     """
     Berechnet pro Symbol + 5m-Timestamp ob der 5m-Schlusskurs nahe an einem
-    Fibonacci-Level liegt (61.8% oder 78.6% des letzten 1H-Swings).
+    Fibonacci-Level liegt (61.8% oder 78.6% des letzten Swings auf swing_tf).
+
+    swing_tf: Timeframe, auf dem der Swing High/Low gemessen wird (z.B. "1h", "30m").
 
     Long:  Preis nahe Retracement-Support (swing_high - fib * range)
     Short: Preis nahe Retracement-Resistance (swing_low + fib * range)
@@ -333,18 +545,18 @@ def _precompute_fib_lookup(symbol_data: dict, htf_states: dict) -> dict:
 
     for symbol, (df_5m, _) in symbol_data.items():
         ts_5m = pd.DatetimeIndex(df_5m["timestamp"])
-        df_1h = htf_states.get(symbol, {}).get("df_1h")
+        df_sw = htf_states.get(symbol, {}).get(f"df_{swing_tf}")
 
         empty = {
             "fib_near_long": pd.Series([False] * len(ts_5m), index=ts_5m),
             "fib_near_short": pd.Series([False] * len(ts_5m), index=ts_5m),
         }
-        if df_1h is None or df_1h.empty:
+        if df_sw is None or df_sw.empty:
             fib_lookup[symbol] = empty
             continue
 
-        # Rolling Swing High/Low auf 1H
-        df_h = df_1h.copy()
+        # Rolling Swing High/Low auf swing_tf
+        df_h = df_sw.copy()
         df_h["sw_hi"] = df_h["high"].rolling(_FIB_LOOKBACK, min_periods=_FIB_LOOKBACK).max()
         df_h["sw_lo"] = df_h["low"].rolling(_FIB_LOOKBACK, min_periods=_FIB_LOOKBACK).min()
         rng = df_h["sw_hi"] - df_h["sw_lo"]
@@ -354,9 +566,9 @@ def _precompute_fib_lookup(symbol_data: dict, htf_states: dict) -> dict:
             df_h[f"dn_{key}"] = df_h["sw_hi"] - lvl * rng   # Long-Support
             df_h[f"up_{key}"] = df_h["sw_lo"] + lvl * rng   # Short-Resistance
 
-        # Repaint-Schutz: nur abgeschlossene 1H-Kerzen verwenden
-        ims_1h = _INTERVAL_MS["1h"]
-        close_times = pd.DatetimeIndex(df_h["timestamp"] + pd.Timedelta(milliseconds=ims_1h))
+        # Repaint-Schutz: nur abgeschlossene swing_tf-Kerzen verwenden
+        ims_sw = _INTERVAL_MS[swing_tf]
+        close_times = pd.DatetimeIndex(df_h["timestamp"] + pd.Timedelta(milliseconds=ims_sw))
         fib_cols = [c for c in df_h.columns if c.startswith(("dn_", "up_"))]
         df_h_idx = df_h[fib_cols].copy()
         df_h_idx.index = close_times
@@ -396,6 +608,12 @@ def simulate_mtf(
     fixed_margin_usd: float = 0.0,
     leverage: float = 1.0,
     use_fibonacci: bool = False,
+    tp_rr: float = 1.0,
+    fib_swing_tf: str = "1h",
+    mfi_directional: bool = False,
+    mfi_long_min: float = 45.0,
+    mfi_short_max: float = 55.0,
+    entry_timing: bool = False,
 ) -> list:
     """
     Multi-Coin-Simulation mit MTF-Gate (1H+30m) + Entry-Kaskade (15m+1m).
@@ -414,8 +632,15 @@ def simulate_mtf(
 
     # O(n_htf + n_5m) Vorberechnung — danach O(1) per Kerze
     gate_lookup = _precompute_lookup(symbol_data, htf_states, _HTF_INTERVALS)
-    entry_filter_lookup = _precompute_lookup(symbol_data, htf_states, _ENTRY_FILTER_TFS)
-    fib_lookup = _precompute_fib_lookup(symbol_data, htf_states) if use_fibonacci else {}
+    # Entry-Kaskade: Timing-Modus = reine WaveTrend-Richtung (keine eigene
+    # Divergenz noetig), sonst Divergenz-State wie das Gate.
+    if entry_timing:
+        entry_filter_lookup = _precompute_wtdir_lookup(symbol_data, htf_states, _ENTRY_FILTER_TFS)
+    else:
+        entry_filter_lookup = _precompute_lookup(symbol_data, htf_states, _ENTRY_FILTER_TFS)
+    fib_lookup = _precompute_fib_lookup(symbol_data, htf_states, fib_swing_tf) if use_fibonacci else {}
+    # Money Flow auf den Gate-TFs (Fokus-TF, z.B. 15m): MFI bestaetigt die Richtung
+    mfi_gate_lookup = _precompute_mfi_lookup(symbol_data, htf_states, _HTF_INTERVALS) if mfi_directional else {}
 
     state = {
         "balance": start_balance,
@@ -425,6 +650,17 @@ def simulate_mtf(
     }
     positions: dict = {}
     trades: list = []
+
+    # Filterzaehler fuer Trichter-Auswertung
+    filter_counts = {
+        "setups_5m": 0,
+        "pass_gate": 0,
+        "pass_cascade": 0,
+        "pass_fib": 0,
+        "pass_mfi": 0,
+        "blocked_open": 0,
+        "trades_opened": 0,
+    }
 
     all_ts = sorted({
         ts
@@ -534,12 +770,35 @@ def simulate_mtf(
             gate_direction = gate_dirs[0]
             if gate_direction is None:
                 continue
+            filter_counts["pass_gate"] += 1
+
+            # Money-Flow-Richtungsfilter auf den Gate-TFs (Fokus-TF, z.B. 15m):
+            # HTF gibt die Richtung vor, MFI muss sie bestaetigen. Long nur ab
+            # MFI>=long_min, Short nur bis MFI<=short_max — auf JEDEM Gate-TF.
+            if mfi_directional:
+                sym_mfi = mfi_gate_lookup.get(symbol, {})
+                mfi_ok = True
+                for tf in _HTF_INTERVALS:
+                    mv = sym_mfi.get(tf, pd.Series(dtype=float)).get(ts)
+                    if mv is None or pd.isna(mv):
+                        mfi_ok = False
+                        break
+                    if gate_direction == "long" and mv < mfi_long_min:
+                        mfi_ok = False
+                        break
+                    if gate_direction == "short" and mv > mfi_short_max:
+                        mfi_ok = False
+                        break
+                if not mfi_ok:
+                    continue
+                filter_counts["pass_mfi"] += 1
 
             # Entry-Kaskade: 15m + 1m muessen Gate-Richtung bestaetigen
             sym_entry = entry_filter_lookup.get(symbol, {})
             entry_dirs = [sym_entry.get(tf, pd.Series(dtype=object)).get(ts) for tf in _ENTRY_FILTER_TFS]
             if None in entry_dirs or any(d != gate_direction for d in entry_dirs):
                 continue
+            filter_counts["pass_cascade"] += 1
 
             # 5m-Setup in Gate-Richtung suchen
             setups = sym_setups.get(symbol, pd.DataFrame())
@@ -559,6 +818,7 @@ def simulate_mtf(
             valid = setups[mask]
             if valid.empty:
                 continue
+            filter_counts["setups_5m"] += len(valid)
 
             s = valid.iloc[-1]
 
@@ -569,6 +829,7 @@ def simulate_mtf(
                 near = sym_fib.get(fib_key, pd.Series(dtype=bool)).get(ts, False)
                 if not near:
                     continue
+                filter_counts["pass_fib"] += 1
 
             score = 2  # Gate-TFs immer 2/2 wenn wir hier ankommen
             candidates.append((score, symbol, s))
@@ -589,15 +850,16 @@ def simulate_mtf(
                 # Fixer Einsatz mit Hebel: Notional = margin × leverage
                 notional = fixed_margin_usd * leverage
                 qty = notional / entry
-                # SL + TP symmetrisch: +/- fixed_margin_usd Gewinn/Verlust
-                dist = fixed_margin_usd / qty  # Preisabstand fuer +/- $margin
+                # SL-Abstand = Risiko von fixed_margin_usd; TP = tp_rr × Risiko.
+                risk_dist = fixed_margin_usd / qty   # Preisabstand fuer -$margin Verlust
+                tp_dist = tp_rr * risk_dist          # bei 2:1 → +2×$margin Gewinn
                 if s["direction"] == "long":
-                    sl = entry - dist
-                    tp1 = entry + dist   # 1:1, kein Teilausstieg
-                    tp2 = tp1            # tp2 = tp1 (wird nicht separat benutzt)
+                    sl = entry - risk_dist
+                    tp1 = entry + tp_dist
+                    tp2 = tp1            # ungenutzt bei vollem Ausstieg
                 else:
-                    sl = entry + dist
-                    tp1 = entry - dist
+                    sl = entry + risk_dist
+                    tp1 = entry - tp_dist
                     tp2 = tp1
             else:
                 sl = float(s["sl"])
@@ -612,13 +874,16 @@ def simulate_mtf(
                 if _book_notional(positions) + qty * entry > state["balance"] * max_book_x:
                     continue
 
+            # Fixer Einsatz → voller Ausstieg (kein 50/50). Risk-pct → Teilausstieg.
             positions[symbol] = MTFPosition.open(
                 entry=entry, sl=sl, tp1=tp1, tp2=tp2, qty=qty,
                 direction=s["direction"], entry_time=ts,
                 divergence=bool(s.get("divergence_active", False)),
+                partial=(fixed_margin_usd <= 0),
             )
+            filter_counts["trades_opened"] += 1
 
-    return trades
+    return trades, filter_counts
 
 
 # ---------------------------------------------------------------------------
@@ -645,7 +910,9 @@ def _print_stats(stats: dict, start_balance: float) -> None:
     ret = (final / start_balance - 1) * 100
 
     print("\n" + "=" * 60)
-    print("  MTF-BACKTEST-ERGEBNIS (1H+30m Gate, 15m+1m Kaskade, 50/50 Exit)")
+    gate_lbl = "+".join(_HTF_INTERVALS)
+    casc_lbl = "+".join(_ENTRY_FILTER_TFS)
+    print(f"  MTF-BACKTEST-ERGEBNIS ({gate_lbl} Gate, {casc_lbl} Kaskade, voller Ausstieg)")
     print("=" * 60)
     print(f"  Trades:        {n}  ({stats['wins']} Gewinner / {stats['losses']} Verlierer)")
     print(f"  Trefferquote:  {wr:.1f} %  (Break-even bei 2:1 eff. RR: ~29%)")
@@ -675,11 +942,45 @@ def main() -> None:
                         help="Fixer Einsatz pro Trade in USD (z.B. 10)")
     parser.add_argument("--leverage", type=float, default=1.0,
                         help="Hebel auf margin-usd (z.B. 30 -> 10*30=300 USD Notional)")
+    parser.add_argument("--tp-rr", type=float, default=1.0,
+                        help="TP-Verhaeltnis bei fixem Einsatz: 1=1:1 ($10/$10), 2=2:1 ($10/$20)")
+    parser.add_argument("--gate-tfs", nargs="+", default=None,
+                        help="Gate-Timeframes (Default: 1h 30m). Bsp: --gate-tfs 30m 15m")
+    parser.add_argument("--entry-filter-tfs", nargs="+", default=None,
+                        help="Entry-Kaskade-Timeframes (Default: 15m 1m). Bsp: --entry-filter-tfs 1m")
+    parser.add_argument("--fib-swing-tf", default="1h",
+                        help="Timeframe fuer den Fibonacci-Swing (Default: 1h). Bsp: --fib-swing-tf 30m")
     parser.add_argument("--coins", nargs="+", default=None)
     parser.add_argument("--no-save", action="store_true")
     parser.add_argument("--fibonacci", action="store_true",
                         help="Fibonacci-Filter: Entry nur an 61.8%%/78.6%%-Levels des 1H-Swings")
+    parser.add_argument("--data-source", choices=["bingx", "binance"], default="bingx",
+                        help="Datenquelle: bingx (Standard, 70d Limit) oder binance (volle History)")
+    parser.add_argument("--mfi-directional", action="store_true",
+                        help="Money-Flow-Richtungsfilter: Long nur ab MFI>=mfi-long-min, "
+                             "Short nur bis MFI<=mfi-short-max (5m trigger_mfi)")
+    parser.add_argument("--mfi-long-min", type=float, default=45.0,
+                        help="MFI-Mindestwert fuer Long-Entries (Default 45)")
+    parser.add_argument("--mfi-short-max", type=float, default=55.0,
+                        help="MFI-Hoechstwert fuer Short-Entries (Default 55)")
+    parser.add_argument("--entry-timing", action="store_true",
+                        help="Entry-Kaskade als reines Timing: LTF braucht nur "
+                             "WaveTrend-Richtung (wt1>=wt2) statt eigener Divergenz")
+    parser.add_argument("--entry-signal", choices=["anchor", "divergence"], default="anchor",
+                        help="5m-Signal: anchor (Anchor-Trigger, selten) oder "
+                             "divergence (Divergenz bei Wellen-Ende, haeufiger)")
     args = parser.parse_args()
+
+    # TF-Konfiguration optional ueberschreiben (nicht-destruktiv: Default = alte Strategie)
+    global _HTF_INTERVALS, _ENTRY_FILTER_TFS
+    if args.gate_tfs:
+        _HTF_INTERVALS = args.gate_tfs
+    if args.entry_filter_tfs:
+        _ENTRY_FILTER_TFS = args.entry_filter_tfs
+    # Alle gewaehlten TFs muessen in _INTERVAL_MS bekannt sein
+    for tf in (_HTF_INTERVALS + _ENTRY_FILTER_TFS):
+        if tf not in _INTERVAL_MS:
+            parser.error(f"Unbekannter Timeframe '{tf}'. Erlaubt: {list(_INTERVAL_MS)}")
 
     with open(PROJECT_ROOT / "config" / "config.yaml", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -698,14 +999,23 @@ def main() -> None:
 
     print("=" * 60)
     fib_label = " + Fibonacci" if args.fibonacci else ""
-    print(f"  MTF Divergenz-Backtest (1H+30m Gate, 15m+1m Kaskade{fib_label})")
+    if args.mfi_directional:
+        fib_label += f" + MFI({args.mfi_long_min:.0f}/{args.mfi_short_max:.0f})"
+    src_label = args.data_source.upper()
+    gate_label = "+".join(_HTF_INTERVALS)
+    casc_label = "+".join(_ENTRY_FILTER_TFS)
+    if args.entry_timing:
+        casc_label += "-Timing"
+    print(f"  MTF Divergenz-Backtest ({gate_label} Gate, {casc_label} Kaskade, {_ENTRY_INTERVAL} Entry{fib_label}) [{src_label}]")
     print("=" * 60)
     print(f"  Zeitraum:     {start_dt.date()} -> {end_dt.date()}  ({days} Tage)")
     print(f"  Coins:        {', '.join(symbols)}")
     print(f"  Startkapital: {args.balance:.0f} USDT")
     if args.margin_usd > 0:
         notional = args.margin_usd * args.leverage
-        print(f"  Modus:        Fixer Einsatz {args.margin_usd:.0f} USD x {args.leverage:.0f}x = {notional:.0f} USD Notional (1:1 RR)")
+        tp_usd = args.margin_usd * args.tp_rr
+        print(f"  Modus:        Fixer Einsatz {args.margin_usd:.0f} USD x {args.leverage:.0f}x = {notional:.0f} USD Notional")
+        print(f"                Voller Ausstieg, {args.tp_rr:.0f}:1 RR (Risiko {args.margin_usd:.0f} USD / Ziel {tp_usd:.0f} USD)")
     else:
         print(f"  Risiko/Trade: {risk_pct_eff:.1f}%  =  {risk_usd:.0f} USD SL-Betrag")
     print("=" * 60)
@@ -713,21 +1023,26 @@ def main() -> None:
     symbol_data = {}
     htf_states = {}
 
+    # Zu ladende TFs: Gate + Entry-Kaskade (+ Fib-Swing-TF falls Fibonacci aktiv)
+    load_tfs = list(dict.fromkeys(_HTF_INTERVALS + _ENTRY_FILTER_TFS))
+    if args.fibonacci and args.fib_swing_tf not in load_tfs:
+        load_tfs.append(args.fib_swing_tf)
+
     for symbol in symbols:
         print(f"\n  [{symbol}] Lade Daten...", flush=True)
         try:
-            # TF-Daten: Gate (1H, 30m) + Entry-Kaskade (15m, 1m)
-            # 15m und 1m unterliegen demselben ~70-Tage-Limit wie 5m auf BingX.
+            # TF-Daten: Gate + Entry-Kaskade (+ ggf. Fib-Swing)
             htf = {}
-            for tf in (_HTF_INTERVALS + _ENTRY_FILTER_TFS):
+            for tf in load_tfs:
                 show_progress = tf in ("1m",)
                 df_htf = _load_and_prepare(symbol, tf, start_dt, end_dt, config,
-                                           verbose=show_progress)
-                if df_htf.empty and tf in ("15m", "1m"):
+                                           verbose=show_progress, data_source=args.data_source)
+                # BingX hat ~70-Tage-Limit fuer kurze TFs — Binance nicht
+                if df_htf.empty and tf in ("15m", "1m") and args.data_source == "bingx":
                     tf_start = end_dt - pd.Timedelta(days=70)
                     print(f"  [{symbol}] {tf}: Fallback auf {tf_start.date()} (BingX ~70-Tage-Limit)", flush=True)
                     df_htf = _load_and_prepare(symbol, tf, tf_start, end_dt, config,
-                                               verbose=show_progress)
+                                               verbose=show_progress, data_source=args.data_source)
                 if df_htf.empty:
                     print(f"  [{symbol}] ! {tf}: keine Daten")
                 else:
@@ -751,11 +1066,15 @@ def main() -> None:
             # HTF-Daten (4H/1H/30m) laufen laenger und werden fuer die
             # Divergenz-Vorheizung weiterhin ab start_dt geladen.
             print(f"  [{symbol}] 5m: Lade + Setups...", flush=True)
-            df_5m, setups = _load_entry_tf(symbol, start_dt, end_dt, config)
-            if df_5m.empty:
+            df_5m, setups = _load_entry_tf(symbol, start_dt, end_dt, config,
+                                           data_source=args.data_source,
+                                           entry_signal=args.entry_signal)
+            if df_5m.empty and args.data_source == "bingx":
                 entry_start = end_dt - pd.Timedelta(days=70)
                 print(f"  [{symbol}] 5m: Fallback auf {entry_start.date()} (BingX ~70-Tage-Limit)", flush=True)
-                df_5m, setups = _load_entry_tf(symbol, entry_start, end_dt, config)
+                df_5m, setups = _load_entry_tf(symbol, entry_start, end_dt, config,
+                                               data_source=args.data_source,
+                                               entry_signal=args.entry_signal)
             if df_5m.empty:
                 print(f"  [{symbol}] ! 5m: keine Daten -- uebersprungen")
                 continue
@@ -773,14 +1092,30 @@ def main() -> None:
         return
 
     print(f"\n  Starte MTF-Simulation ({len(symbol_data)} Coins)...", flush=True)
-    trades = simulate_mtf(
+    trades, fcounts = simulate_mtf(
         symbol_data, htf_states, config,
         start_balance=args.balance,
         fixed_margin_usd=args.margin_usd,
         leverage=args.leverage,
         use_fibonacci=args.fibonacci,
+        tp_rr=args.tp_rr,
+        fib_swing_tf=args.fib_swing_tf,
+        mfi_directional=args.mfi_directional,
+        mfi_long_min=args.mfi_long_min,
+        mfi_short_max=args.mfi_short_max,
+        entry_timing=args.entry_timing,
     )
     print(f"  Fertig: {len(trades)} Trade-Ereignisse (inkl. Teilausstiege)", flush=True)
+
+    print("\n  SETUP-TRICHTER (potenzielle vs. ausgefuehrte Trades):")
+    print(f"  5m Setups gesamt       : {fcounts['setups_5m']}")
+    print(f"  Gate {'+'.join(_HTF_INTERVALS)} passiert : {fcounts['pass_gate']}")
+    print(f"  Kaskade {'+'.join(_ENTRY_FILTER_TFS)} passiert: {fcounts['pass_cascade']}")
+    if args.fibonacci:
+        print(f"  Fibonacci-Level passiert: {fcounts['pass_fib']}")
+    if args.mfi_directional:
+        print(f"  MFI-Filter passiert    : {fcounts['pass_mfi']}")
+    print(f"  Tatsaechlich eroeffnet : {fcounts['trades_opened']}")
 
     if not args.no_save and trades:
         out = PROJECT_ROOT / "data" / "backtest_mtf_trades.csv"
