@@ -38,6 +38,10 @@ import yaml
 from src.config_utils import get_symbols, resolve_config
 from src.exchange.binance_client import fetch_binance_klines_range
 from src.exchange.bingx_client import fetch_bingx_klines_range
+from src.exchange.dukascopy_client import (
+    SYMBOL_MAP as _DUKA_MAP,
+    fetch_dukascopy_klines_range,
+)
 from src.indicators.mfi import calculate_mfi
 from src.indicators.wavetrend import calculate_wavetrend, detect_dots
 from src.paper.paper_engine import exit_costs, size_qty
@@ -71,10 +75,25 @@ _FIB_TOLERANCE_PCT = 0.5 # +/- 0.5% Toleranzband um das Level
 # Daten + Indikatoren
 # ---------------------------------------------------------------------------
 
+def _is_dukascopy_symbol(symbol: str) -> bool:
+    """True, wenn das Symbol ein Nicht-Krypto-Wert (Dukascopy) ist."""
+    key = symbol.upper().replace("-", "/")
+    return key in _DUKA_MAP
+
+
 def _fetch(symbol: str, interval: str, start_dt, end_dt,
            data_source: str = "bingx", verbose: bool = False) -> pd.DataFrame:
-    """Einheitlicher Daten-Fetcher fuer BingX oder Binance."""
-    if data_source == "binance":
+    """Einheitlicher Daten-Fetcher fuer BingX, Binance oder Dukascopy.
+
+    data_source="auto": Krypto -> Binance, Gold/Indizes -> Dukascopy (pro Symbol).
+    """
+    src = data_source
+    if src == "auto":
+        src = "dukascopy" if _is_dukascopy_symbol(symbol) else "binance"
+
+    if src == "dukascopy":
+        return fetch_dukascopy_klines_range(symbol, interval, start_dt, end_dt, verbose=verbose)
+    if src == "binance":
         return fetch_binance_klines_range(symbol, interval, start_dt, end_dt, verbose=verbose)
     bingx_sym = symbol.replace("/", "-")
     return fetch_bingx_klines_range(bingx_sym, interval, start_dt, end_dt, verbose=verbose)
@@ -954,8 +973,11 @@ def main() -> None:
     parser.add_argument("--no-save", action="store_true")
     parser.add_argument("--fibonacci", action="store_true",
                         help="Fibonacci-Filter: Entry nur an 61.8%%/78.6%%-Levels des 1H-Swings")
-    parser.add_argument("--data-source", choices=["bingx", "binance"], default="bingx",
-                        help="Datenquelle: bingx (Standard, 70d Limit) oder binance (volle History)")
+    parser.add_argument("--data-source", choices=["bingx", "binance", "dukascopy", "auto"],
+                        default="bingx",
+                        help="Datenquelle: bingx (70d Limit), binance (volle History), "
+                             "dukascopy (Gold/Indizes) oder auto (Krypto->Binance, "
+                             "Gold/Indizes->Dukascopy je Symbol)")
     parser.add_argument("--mfi-directional", action="store_true",
                         help="Money-Flow-Richtungsfilter: Long nur ab MFI>=mfi-long-min, "
                              "Short nur bis MFI<=mfi-short-max (5m trigger_mfi)")
