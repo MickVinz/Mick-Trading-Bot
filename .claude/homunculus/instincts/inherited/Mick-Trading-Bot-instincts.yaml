@@ -1,0 +1,457 @@
+# Instincts generated from https://github.com/MickVinz/Mick-Trading-Bot
+# Generated: 2026-06-13T15:10:43.339Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: Mick-Trading-Bot-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat
+
+## Evidence
+
+- 7 commits analyzed
+- Detected conventional commit pattern
+- Examples: feat: config_utils fuer Multi-Coin (Symbol-Liste + Per-Coin-Overrides), feat: config.yaml auf 6 Coins, Tageslimit 10%, RR bleibt 2:1
+
+---
+id: Mick-Trading-Bot-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Commit Length
+
+## Action
+
+Write moderate-length commit messages (~68 characters)
+
+## Evidence
+
+- Average commit message length: 68 chars
+- Based on 7 commits
+
+---
+id: Mick-Trading-Bot-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Naming Files
+
+## Action
+
+Use snake_case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: snake_case
+
+---
+id: Mick-Trading-Bot-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: Mick-Trading-Bot-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: Mick-Trading-Bot-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: Mick-Trading-Bot-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~30x per month
+- Files: **/*.test.*
+
+---
+id: Mick-Trading-Bot-workflow-feature-implementation-with-tests
+trigger: "when doing feature implementation with tests"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Workflow Feature Implementation With Tests
+
+## Action
+
+Follow the feature-implementation-with-tests workflow:
+1. Implement feature logic in src/ (e.g., src/config_utils.py, src/paper/journal.py, src/paper/paper_engine.py)
+2. Create or update corresponding test script in scripts/ (e.g., scripts/test_config_utils.py, scripts/test_journal_multicoin.py, scripts/test_paper_engine.py)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: src/*.py, scripts/test_*.py
+
+---
+id: Mick-Trading-Bot-workflow-multi-coin-feature-rollout
+trigger: "when doing multi coin feature rollout"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Workflow Multi Coin Feature Rollout
+
+## Action
+
+Follow the multi-coin-feature-rollout workflow:
+1. Update config/config.yaml for new coins or overrides
+2. Implement or update migration scripts (e.g., scripts/migrate_state_v2.py)
+3. Update dashboard or UI scripts (e.g., scripts/dashboard.html)
+4. Document the feature in docs/superpowers/plans/ and docs/superpowers/specs/
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: config/config.yaml, scripts/migrate_*.py, scripts/dashboard.html
+
+---
+id: mick-trading-bot-instinct-naming-files
+trigger: "When creating a new file in the codebase"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Naming Files
+
+## Action
+
+Name the file using snake_case
+
+## Evidence
+
+- Pattern in src/ and scripts/ files
+- Naming conventions section
+
+---
+id: mick-trading-bot-instinct-naming-functions
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Naming Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Naming conventions section
+- Pattern in src/*.py
+
+---
+id: mick-trading-bot-instinct-naming-classes
+trigger: "When defining a new class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Naming Classes
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Naming conventions section
+- Pattern in src/*.py
+
+---
+id: mick-trading-bot-instinct-naming-constants
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Naming Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Naming conventions section
+
+---
+id: mick-trading-bot-instinct-imports-relative
+trigger: "When importing modules within the package"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Imports Relative
+
+## Action
+
+Use relative imports
+
+## Evidence
+
+- importStyle: relative
+- Pattern in src/*.py
+
+---
+id: mick-trading-bot-instinct-exports-named
+trigger: "When exporting functions or classes"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Exports Named
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- exportStyle: named
+
+---
+id: mick-trading-bot-instinct-testing-location
+trigger: "When adding or updating tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Testing Location
+
+## Action
+
+Place test scripts in the scripts/ directory, not alongside source files
+
+## Evidence
+
+- testLocation: separate
+- Pattern in scripts/test_*.py
+
+---
+id: mick-trading-bot-instinct-testing-naming
+trigger: "When naming a test script"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Testing Naming
+
+## Action
+
+Prefix the filename with test_ (e.g., test_config_utils.py)
+
+## Evidence
+
+- Pattern in scripts/test_*.py
+- filesInvolved in workflows
+
+---
+id: mick-trading-bot-instinct-testing-feature
+trigger: "When implementing a new feature"
+confidence: 0.95
+domain: testing
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Testing Feature
+
+## Action
+
+Create or update a corresponding test script for the feature
+
+## Evidence
+
+- feature-implementation-with-tests workflow
+- Example commit sequences
+
+---
+id: mick-trading-bot-instinct-git-commit-format
+trigger: "When making a commit"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Git Commit Format
+
+## Action
+
+Use conventional commits with the 'feat' prefix for features (e.g., feat: ...)
+
+## Evidence
+
+- commits.type: conventional
+- commits.prefixes: ["feat"]
+- Example commits
+
+---
+id: mick-trading-bot-instinct-git-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Git Commit Length
+
+## Action
+
+Keep the commit message concise (~68 characters on average)
+
+## Evidence
+
+- commits.averageLength: 68
+
+---
+id: mick-trading-bot-instinct-workflow-feature-with-tests
+trigger: "When adding a new feature or major enhancement"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Workflow Feature With Tests
+
+## Action
+
+Implement the feature in src/, then create or update a corresponding test script in scripts/
+
+## Evidence
+
+- feature-implementation-with-tests workflow
+- Example commit and file sequences
+
+---
+id: mick-trading-bot-instinct-workflow-multi-coin-rollout
+trigger: "When extending the system to support multiple coins/assets"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: MickVinz/Mick-Trading-Bot
+---
+
+# Mick Trading Bot Instinct Workflow Multi Coin Rollout
+
+## Action
+
+Update config/config.yaml, implement or update migration scripts, update dashboard/UI scripts, and document the feature in docs/superpowers/
+
+## Evidence
+
+- multi-coin-feature-rollout workflow
+- Example commit and file sequences
+
